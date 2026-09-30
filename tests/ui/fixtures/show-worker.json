@@ -1,0 +1,6 @@
+{
+  "enabled": { "value": true, "source": "session" },
+  "message": { "value": "keep going", "source": "session" },
+  "delay_secs": { "value": 60, "source": "session" },
+  "warnings": []
+}

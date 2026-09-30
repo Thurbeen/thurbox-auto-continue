@@ -26,6 +26,14 @@ fn pair(host: Sandbox, link: Link, shared: bool) -> (Sandbox, Sandbox) {
     (laptop, host)
 }
 
+/// Whether `v` is that link's route to the host, in either spelling: Thurbox
+/// 2.39.7 appends the host's multiplexer (`ssh:devbox:tmux`), earlier ones do
+/// not (`ssh:devbox`).
+fn is_route(v: &Value, link: Link) -> bool {
+    let want = backend(link);
+    v.as_str().is_some_and(|s| s == want || s == format!("{want}:tmux"))
+}
+
 fn backend(link: Link) -> String {
     format!("{}:{HOST}", if link == Link::Ssh { "ssh" } else { "wsl" })
 }
@@ -59,8 +67,11 @@ fn one_send_from_the_host(link: Link) {
     host.config(&[("enabled", "on")]);
     laptop.config(&[("enabled", "on")]);
     let id = laptop.remote_session("worker", HOST, &host);
-    assert_eq!(laptop.session_row(&id)["backend_type"], backend(link));
-    assert_eq!(host.session_row(&id)["backend_type"], "local-tmux");
+    let route = &laptop.session_row(&id)["backend_type"];
+    assert!(is_route(route, link), "{route}");
+    // `local-tmux` before Thurbox 2.39.7, `local:tmux` from it.
+    let on_host = &host.session_row(&id)["backend_type"];
+    assert!(matches!(on_host.as_str(), Some("local-tmux" | "local:tmux")), "{on_host}");
 
     // Set from the laptop, stored on the host: what the host types.
     let out = laptop.tac(&["config", "set", "message", "resume on the host", "--session", &id, "--json"]);
@@ -97,7 +108,7 @@ fn one_send_from_the_host(link: Link) {
 
     // The laptop's status is the host's own answer.
     let (s, _) = status(&laptop, &id);
-    assert_eq!(s["host"]["backend"], backend(link));
+    assert!(is_route(&s["host"]["backend"], link), "{}", s["host"]);
     assert_eq!(s["host"]["reason"], Value::Null, "{s}");
     assert_eq!(s["eligible"], true, "{s}");
     assert_eq!(s["enabled"], true, "{s}");
@@ -139,7 +150,7 @@ fn a_remote_toggle_and_overrides_land_in_the_hosts_database() {
         assert_eq!(v["session"], id.as_str());
         assert_eq!(v["key"], key);
         assert_eq!(v["value"], value);
-        assert_eq!(v["host"], "ssh:devbox");
+        assert!(is_route(&v["host"], Link::Ssh), "{v}");
     }
     assert_eq!(meta(&host, &id, "auto-continue.enabled").as_deref(), Some("on"));
     assert_eq!(meta(&host, &id, "auto-continue.message").as_deref(), Some("keep going there"));
@@ -156,7 +167,7 @@ fn a_remote_toggle_and_overrides_land_in_the_hosts_database() {
     assert_eq!(s["settings"]["message"], json!({ "value": "keep going there", "source": "session" }));
     assert_eq!(s["settings"]["delay_secs"], json!({ "value": 3600, "source": "session" }));
     assert_eq!(s["overrides"], json!({ "enabled": "on", "message": "keep going there", "delay_secs": "3600" }));
-    assert_eq!(s["host"]["backend"], "ssh:devbox");
+    assert!(is_route(&s["host"]["backend"], Link::Ssh), "{}", s["host"]);
     assert_eq!(s["host"]["extension_active"], true);
 
     host.script(&id, &["limit:five_hour:1:cancelled", "ok"]);
@@ -217,7 +228,9 @@ fn a_host_that_does_not_share_its_sessions_is_never_sent() {
     assert_eq!(s["eligible"], false);
     assert_eq!(s["ineligible_reason"], "remote");
     assert_eq!(s["enabled"], false);
-    assert_eq!(s["host"], json!({ "backend": "ssh:devbox", "reason": "not-shared", "extension_active": null }));
+    assert!(is_route(&s["host"]["backend"], Link::Ssh), "{}", s["host"]);
+    assert_eq!(s["host"]["reason"], "not-shared");
+    assert!(s["host"]["extension_active"].is_null());
 
     for ctl in [&host, &laptop] {
         ctl.script(&id, &["limit:five_hour:1:cancelled", "ok"]);

@@ -8,6 +8,11 @@
 #
 # Install with `./install.sh`, not `thurbox-cli extension install` alone: the
 # installer also puts the binary where the commands below expect it.
+#
+# The Thurbox TUI plugin (ui/) is not part of this manifest: an extension
+# cannot deliver interface panes, so it is installed with
+# `thurbox-cli plugin install` (README.md, "In the Thurbox TUI"). It changes
+# nothing declared here — it reads and writes through the CLI, like a script.
 
 name = "auto-continue"
 description = "Type `continue` into a Claude session once its usage limit has reset — headless, no model involved."

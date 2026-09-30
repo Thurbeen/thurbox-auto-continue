@@ -1,7 +1,8 @@
 # The gate the `publish` skill runs for this repository.
 #
 # The test step drives a real, sandboxed thurbox-cli and tmux server: it needs
-# tmux, and a thurbox-cli on PATH or named by TAC_THURBOX_CLI (see README.md).
+# tmux, Lua 5.4 (for the Thurbox plugin's suites) and a thurbox-cli on PATH or
+# named by TAC_THURBOX_CLI (see README.md).
 
 version: 1
 
@@ -17,8 +18,9 @@ gate:
     run:
       - cargo fmt --all --check
       - cargo clippy --all-targets --locked -- -D warnings
-      - shellcheck install.sh
-    fix: cargo fmt --all
+      - shellcheck install.sh demo/*.sh tests/ui/run.sh
+      - stylua --check ui tests/ui
+    fix: cargo fmt --all && stylua ui tests/ui
   - name: test
     run: cargo test --locked
 
