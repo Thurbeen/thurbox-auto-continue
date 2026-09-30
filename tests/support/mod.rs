@@ -35,7 +35,17 @@ pub struct Sandbox {
     pub bin: PathBuf,
     pub ctl: PathBuf,
     socket: std::cell::RefCell<Option<String>>,
+    /// tmux servers this sandbox started on a host that does not share its
+    /// sessions: the laptop drives them, so the laptop tears them down.
+    legacy_sockets: std::cell::RefCell<Vec<String>>,
     extra_env: Vec<(String, String)>,
+}
+
+/// How a laptop reaches a host: Thurbox's two transports.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Link {
+    Ssh,
+    Wsl,
 }
 
 /// `name` on the test runner's own PATH.
@@ -96,6 +106,7 @@ impl Sandbox {
             bin,
             ctl,
             socket: Default::default(),
+            legacy_sockets: Default::default(),
             extra_env: Vec::new(),
         };
         sb.git(&["init", "-q", "-b", "main"]);
@@ -130,6 +141,11 @@ impl Sandbox {
         std::fs::create_dir_all(&bin).unwrap();
         let _ = std::fs::remove_file(bin.join("thurbox-auto-continue"));
         std::os::unix::fs::symlink(BIN, bin.join("thurbox-auto-continue")).unwrap();
+        // And on the user's own PATH, as install.sh links it.
+        let local_bin = self.home.join(".local/bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let _ = std::fs::remove_file(local_bin.join("thurbox-auto-continue"));
+        std::os::unix::fs::symlink(BIN, local_bin.join("thurbox-auto-continue")).unwrap();
         // Tests that need a clock run with no delay and a short confirmation.
         self.config(&[("delay_secs", "0"), ("confirm_secs", "5")]);
     }
@@ -152,25 +168,174 @@ impl Sandbox {
         assert!(ok, "git {args:?}");
     }
 
+    /// The whole environment a command in this sandbox runs under, `PATH` first.
+    fn env(&self, path: String) -> Vec<(String, String)> {
+        let mut env: Vec<(String, String)> = [
+            ("PATH", path),
+            ("HOME", self.home.display().to_string()),
+            ("THURBOX_CONFIG_DIR", self.root.join("cfg").display().to_string()),
+            ("THURBOX_DATA_DIR", self.root.join("data").display().to_string()),
+            ("FAKE_CLAUDE_CTL", self.ctl.display().to_string()),
+            ("TERM", "xterm-256color".into()),
+            ("LANG", "C.UTF-8".into()),
+            ("GIT_AUTHOR_NAME", "t".into()),
+            ("GIT_AUTHOR_EMAIL", "t@example.com".into()),
+            ("GIT_COMMITTER_NAME", "t".into()),
+            ("GIT_COMMITTER_EMAIL", "t@example.com".into()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        env.extend(self.extra_env.iter().cloned());
+        env
+    }
+
     pub fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
         let mut c = Command::new(program);
         c.env_clear()
-            .env("PATH", format!("{}:/usr/local/bin:/usr/bin:/bin", self.bin.display()))
-            .env("HOME", &self.home)
-            .env("THURBOX_CONFIG_DIR", self.root.join("cfg"))
-            .env("THURBOX_DATA_DIR", self.root.join("data"))
-            .env("FAKE_CLAUDE_CTL", &self.ctl)
-            .env("TERM", "xterm-256color")
-            .env("LANG", "C.UTF-8")
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@example.com")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .envs(self.env(format!("{}:/usr/local/bin:/usr/bin:/bin", self.bin.display())))
             .stdin(Stdio::null());
-        for (k, v) in &self.extra_env {
-            c.env(k, v);
-        }
         c
+    }
+
+    /// Reach `host` from this sandbox as `name`: an entry in `hosts.toml`, and a
+    /// stand-in `ssh` or `wsl.exe` on this sandbox's PATH that runs the command
+    /// under the host sandbox's own environment. Only the network is faked:
+    /// the host has its own HOME, Thurbox database, tmux server and install.
+    ///
+    /// The host's PATH over the link is what a non-interactive login gives:
+    /// neither `thurbox-cli` nor `thurbox-auto-continue` is on it. They are in
+    /// `~/.local/bin` there, as an install leaves them, which the host's login
+    /// profile adds; tmux is on it.
+    pub fn add_host(&self, name: &str, host: &Sandbox, link: Link, shared: bool) {
+        let sshbin = host.root.join("sshbin");
+        let local_bin = host.home.join(".local/bin");
+        for d in [&sshbin, &local_bin] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let _ = std::os::unix::fs::symlink(on_path("tmux").unwrap(), sshbin.join("tmux"));
+        let _ = std::os::unix::fs::symlink(thurbox_cli(), local_bin.join("thurbox-cli"));
+        // A login shell there puts `~/.local/bin` first, as a user's profile
+        // does; Thurbox reads it for what it launches on the host.
+        std::fs::write(host.home.join(".profile"), "PATH=\"$HOME/.local/bin:$PATH\"\n").unwrap();
+        let env = host
+            .env(format!("{}:/usr/local/bin:/usr/bin:/bin", sshbin.display()))
+            .iter()
+            .map(|(k, v)| quote(&format!("{k}={v}")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let log = quote(&self.root.join("link.log").display().to_string());
+        let (file, script, entry) = match link {
+            // ssh joins the words after the destination and the host's login
+            // shell runs them.
+            Link::Ssh => (
+                "ssh",
+                format!(
+                    "#!/bin/sh\n\
+                     while [ \"$#\" -gt 0 ]; do\n\
+                     \x20 case \"$1\" in\n\
+                     \x20   -[bcDEeFIiJLlmOoPpQRSWw]) shift 2 ;;\n\
+                     \x20   -*) shift ;;\n\
+                     \x20   *) break ;;\n\
+                     \x20 esac\n\
+                     done\n\
+                     [ \"$#\" -gt 0 ] && shift\n\
+                     [ \"$#\" -eq 0 ] && exit 0\n\
+                     printf 'ssh %s\\n' \"$*\" >> {log}\n\
+                     exec env -i {env} sh -c \"$*\"\n"
+                ),
+                format!("[[hosts]]\nname = \"{name}\"\ndestination = \"user@{name}\"\n"),
+            ),
+            // wsl.exe: `-e` hands argv over verbatim; otherwise the in-distro
+            // shell reads the joined words, as over ssh.
+            Link::Wsl => (
+                "wsl.exe",
+                format!(
+                    "#!/bin/sh\n\
+                     case \"$1\" in -l|--list) printf '%s\\n' {name}; exit 0 ;; esac\n\
+                     while [ \"$#\" -gt 0 ]; do\n\
+                     \x20 case \"$1\" in\n\
+                     \x20   -d|--distribution|--cd|-u|--user) shift 2 ;;\n\
+                     \x20   -e|--exec) shift; printf 'wsl %s\\n' \"$*\" >> {log}; exec env -i {env} \"$@\" ;;\n\
+                     \x20   -*) shift ;;\n\
+                     \x20   *) break ;;\n\
+                     \x20 esac\n\
+                     done\n\
+                     [ \"$#\" -eq 0 ] && exit 0\n\
+                     printf 'wsl %s\\n' \"$*\" >> {log}\n\
+                     exec env -i {env} sh -c \"$*\"\n"
+                ),
+                format!("[[hosts]]\nname = \"{name}\"\nkind = \"wsl\"\ndistro = \"{name}\"\n"),
+            ),
+        };
+        let path = self.bin.join(file);
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755))
+            .unwrap();
+        let mut entry = entry;
+        if !shared {
+            // A host driven from here keeps its panes on a server this sandbox
+            // names, so nothing lands on a default one.
+            let socket = format!("tac-legacy-{}", self.root.file_name().unwrap().to_string_lossy());
+            entry.push_str(&format!("share_sessions = false\nsocket = \"{socket}\"\n"));
+            self.legacy_sockets.borrow_mut().push(socket);
+        }
+        let hosts = self.root.join("cfg/hosts.toml");
+        let mut text = std::fs::read_to_string(&hosts).unwrap_or_default();
+        text.push_str(&entry);
+        std::fs::write(&hosts, text).unwrap();
+    }
+
+    /// What went over every link, one line per call.
+    pub fn link_log(&self) -> String {
+        std::fs::read_to_string(self.root.join("link.log")).unwrap_or_default()
+    }
+
+    /// A Claude session on `host`, created from here the way the interface
+    /// does it: `session create --host`, which the host runs itself when it
+    /// shares its sessions. Returns the id, the same on both sides.
+    pub fn remote_session(&self, name: &str, host_name: &str, host: &Sandbox) -> String {
+        let v = self.cli(&[
+            "session",
+            "create",
+            "--name",
+            name,
+            "--repo-path",
+            host.repo.to_str().unwrap(),
+            "--agent",
+            "claude",
+            "--host",
+            host_name,
+        ]);
+        let id = v["id"].as_str().unwrap().to_string();
+        let pane = v["backend_id"].as_str().unwrap_or_default().to_string();
+        self.wait("the fake claude to draw on the host", Duration::from_secs(30), || {
+            host.screen_if_known(&id).contains("(fake)") || self.legacy_pane(&pane, &[]).contains("(fake)")
+        });
+        id
+    }
+
+    /// On a host that does not share its sessions, Thurbox 2.36.2 neither
+    /// captures nor types from here without a CLI there, so the tests go to
+    /// the pane on the server this sandbox named. `keys` are typed first.
+    /// Returns the pane's text, or "".
+    pub fn legacy_pane(&self, pane: &str, keys: &[&str]) -> String {
+        let Some(socket) = self.legacy_sockets.borrow().first().cloned() else { return String::new() };
+        if !keys.is_empty() {
+            let _ = Command::new("tmux").args(["-L", &socket, "send-keys", "-t", pane]).args(keys).status();
+        }
+        let out = Command::new("tmux").args(["-L", &socket, "capture-pane", "-p", "-t", pane]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// The pane's text when this sandbox's Thurbox knows the session, else "".
+    pub fn screen_if_known(&self, id: &str) -> String {
+        let out =
+            self.command(self.bin.join("thurbox-cli")).args(["--json", "session", "capture", id]).output().unwrap();
+        serde_json::from_slice::<Value>(&out.stdout)
+            .ok()
+            .and_then(|v| v["output"].as_str().map(String::from))
+            .unwrap_or_default()
     }
 
     /// `thurbox-cli --json <args>`, which must succeed.
@@ -329,10 +494,15 @@ impl Drop for Sandbox {
             let v: Value = serde_json::from_slice(&out.stdout).ok()?;
             v["tmux_socket"].as_str().map(String::from)
         });
-        if let Some(s) = socket {
+        for s in socket.into_iter().chain(self.legacy_sockets.borrow().iter().cloned()) {
             let _ = Command::new("tmux").args(["-L", &s, "kill-server"]).stderr(Stdio::null()).status();
         }
     }
+}
+
+/// One POSIX shell word.
+pub fn quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Our hook command, exactly as install merged it into settings.json.

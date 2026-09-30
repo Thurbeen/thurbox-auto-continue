@@ -256,6 +256,23 @@ fn deactivating_the_extension_stops_a_pending_send() {
     assert_eq!(sb.received(&id), ["hello"]);
 }
 
+/// Uninstalled without `forget --all`: the one-shot Thurbox does not know is
+/// ours stays queued, fires, and still sends nothing.
+#[test]
+fn uninstalling_without_forget_stops_a_queued_send() {
+    let sb = Sandbox::new();
+    let id = sb.session("worker", "claude");
+    // Per session, so the switch survives the uninstall in Thurbox's database.
+    assert!(sb.tac(&["enable", &id]).status.success());
+    sb.script(&id, &["limit:five_hour:1:cancelled", "ok"]);
+    sb.hit_limit(&id);
+    sb.cli(&["extension", "uninstall", "auto-continue", "--purge"]);
+    assert_eq!(sb.our_automations().len(), 1, "the one-shot is still queued");
+    sb.tick_until_fired(&id);
+    assert_eq!(sb.episode(&id).unwrap()["reason"], "extension-inactive");
+    assert_eq!(sb.received(&id), ["hello"]);
+}
+
 /// The sweep picks up an episode whose hook never ran.
 #[test]
 fn the_sweep_recovers_an_episode_the_hook_missed() {

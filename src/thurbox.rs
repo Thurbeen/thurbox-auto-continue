@@ -81,6 +81,16 @@ impl Thurbox {
     /// Run `thurbox-cli --json <args>` and parse what it prints. A non-zero
     /// exit, a timeout or unparseable output is an error.
     pub fn run(&self, args: &[&str]) -> Result<Value, String> {
+        self.run_for(args, self.timeout)
+    }
+
+    /// [`run`](Self::run) for a call that crosses to another host and runs a
+    /// command there: an ssh round trip plus that command's own CLI calls.
+    pub fn run_remote(&self, args: &[&str]) -> Result<Value, String> {
+        self.run_for(args, self.timeout * 3)
+    }
+
+    fn run_for(&self, args: &[&str], timeout: Duration) -> Result<Value, String> {
         let verb = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
         let mut child = Command::new(&self.bin)
             .arg("--json")
@@ -96,7 +106,7 @@ impl Thurbox {
             let _ = stdout.read_to_end(&mut buf);
             buf
         });
-        let deadline = Instant::now() + self.timeout;
+        let deadline = Instant::now() + timeout;
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
@@ -105,7 +115,7 @@ impl Thurbox {
                     let _ = child.wait();
                     // The reader thread is left behind: a grandchild may still
                     // hold the pipe open, and waiting on it would be unbounded.
-                    return Err(format!("thurbox-cli {verb}: timed out after {:?}", self.timeout));
+                    return Err(format!("thurbox-cli {verb}: timed out after {timeout:?}"));
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(20)),
                 Err(e) => return Err(format!("thurbox-cli {verb}: {e}")),
