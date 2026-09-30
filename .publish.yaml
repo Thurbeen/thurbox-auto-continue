@@ -2,7 +2,7 @@
 #
 # The test step drives a real, sandboxed thurbox-cli and tmux server: it needs
 # tmux, Lua 5.4 (for the Thurbox plugin's suites) and a thurbox-cli on PATH or
-# named by TAC_THURBOX_CLI (see README.md).
+# named by TAC_THURBOX_CLI (see AGENTS.md).
 
 version: 1
 
@@ -11,7 +11,7 @@ base: main
 
 review:
   rules:
-    - README.md
+    - AGENTS.md
 
 gate:
   - name: lint
