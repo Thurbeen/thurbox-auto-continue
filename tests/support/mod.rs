@@ -99,10 +99,10 @@ impl Sandbox {
         sb.git(&["commit", "-qm", "init"]);
         // Thurbox's own status hooks, delivered through `--settings`.
         sb.cli(&["extension", "activate", "hooks"]);
-        // The first heartbeat tick activates the other built-ins, and Thurbox
-        // writes its active set read-modify-write: an install racing that tick
-        // can be dropped from it. Wait for the built-ins to settle first.
-        sb.wait("the built-in extensions to settle", Duration::from_secs(20), || sb.active("ui-skill"));
+        // Thurbox activates its other built-in on its own, and it writes its
+        // active set read-modify-write: an install racing that write can be
+        // dropped from the set. Activating it here first leaves nothing to race.
+        sb.cli(&["extension", "activate", "ui-skill"]);
         let agents = sb.root.join("cfg/agents.toml");
         let text = std::fs::read_to_string(&agents).unwrap();
         let fake = format!("command = \"{}\"", fake_claude().display());
