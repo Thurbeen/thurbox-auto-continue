@@ -49,6 +49,15 @@ export PATH="$S/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 # Thurbox's own status hooks, and its agents with the stand-ins in place.
 thurbox-cli extension activate hooks >/dev/null
+# Offline and quiet: no update check or self-update (a recording must show the
+# release it was made with), and no desktop notifications from a sandbox.
+cat >> "$XDG_CONFIG_HOME/thurbox/settings.toml" <<'SETTINGS'
+
+[features]
+version_check = false
+auto_update = false
+notifications = false
+SETTINGS
 thurbox-cli extension activate ui-skill >/dev/null
 cat > "$S/bin/fake-codex" <<'CODEX'
 #!/bin/sh
