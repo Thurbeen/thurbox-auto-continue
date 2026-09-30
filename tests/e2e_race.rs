@@ -177,9 +177,19 @@ fn re_rejections_re_arm_until_the_cap() {
 #[test]
 fn a_hung_thurbox_cli_cannot_hang_a_run() {
     let sb = Sandbox::new();
-    let hung = sb.root.join("hung-thurbox-cli");
-    std::fs::write(&hung, "#!/bin/sh\nexec sleep 600\n").unwrap();
-    std::fs::set_permissions(&hung, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    #[cfg(unix)]
+    let hung = {
+        let hung = sb.root.join("hung-thurbox-cli");
+        std::fs::write(&hung, "#!/bin/sh\nexec sleep 600\n").unwrap();
+        std::fs::set_permissions(&hung, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        hung
+    };
+    #[cfg(windows)]
+    let hung = {
+        let hung = sb.root.join("hung-thurbox-cli.cmd");
+        std::fs::write(&hung, "@ping -n 600 127.0.0.1 >nul\r\n").unwrap();
+        hung
+    };
     for args in [&["fire", "some-session"][..], &["sweep"][..]] {
         let start = Instant::now();
         let out = sb

@@ -77,7 +77,10 @@ fn a_quota_limit_gets_exactly_one_continue_after_the_reset() {
 
     // Both hook sources ran: Thurbox's from `--settings`, ours from settings.json.
     let hooks = sb.ctl_file(&id, "hooks.log");
-    assert!(hooks.lines().any(|l| l.starts_with("UserPromptSubmit") && l.contains("cfg/hooks/claude.json")), "{hooks}");
+    // Either separator: Thurbox hands Claude a forward-slash path on Windows.
+    let from_thurbox =
+        |l: &str| l.starts_with("UserPromptSubmit") && l.replace('\\', "/").contains("cfg/hooks/claude.json");
+    assert!(hooks.lines().any(from_thurbox), "{hooks}");
     let ours = hooks
         .lines()
         .find(|l| l.starts_with("StopFailure") && l.contains("thurbox-auto-continue record"))
@@ -222,9 +225,10 @@ fn the_hook_is_silent_outside_thurbox_and_without_the_binary() {
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stopfailure-hook-input.json"))
             .unwrap();
     let hook = support::stopfailure_command(&sb);
-    for path in [format!("{}:/usr/bin:/bin", sb.bin.display()), "/usr/bin:/bin".to_string()] {
+    let without_bin = std::env::join_paths(std::env::split_paths(&sb.path()).filter(|d| *d != sb.bin)).unwrap();
+    for path in [sb.path(), without_bin] {
         let mut child = sb
-            .command("sh")
+            .command(support::hook_shell())
             .arg("-c")
             .arg(&hook)
             .env("PATH", &path)
@@ -236,8 +240,12 @@ fn the_hook_is_silent_outside_thurbox_and_without_the_binary() {
         use std::io::Write;
         child.stdin.take().unwrap().write_all(payload.as_bytes()).unwrap();
         let out = child.wait_with_output().unwrap();
-        assert!(out.status.success(), "PATH={path}");
-        assert!(out.stdout.is_empty() && out.stderr.is_empty(), "PATH={path}");
+        assert!(out.status.success(), "PATH={path:?}");
+        assert!(
+            out.stdout.is_empty() && out.stderr.is_empty(),
+            "PATH={path:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     assert!(sb.our_automations().is_empty());
 }
@@ -279,24 +287,33 @@ fn the_sweep_recovers_an_episode_the_hook_missed() {
 fn the_installer_round_trips() {
     let sb = Sandbox::bare();
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/install.sh");
-    let out = sb.command("sh").args([script, "--binary", support::BIN]).output().unwrap();
+    let out = support::output_within(
+        sb.command(support::hook_shell()).args([script, "--binary", support::BIN]),
+        "install.sh",
+    );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(sb.active("auto-continue"));
-    assert!(sb.home.join(".local/bin/thurbox-auto-continue").exists());
-    assert!(sb.ext_home.join("bin/thurbox-auto-continue").is_file());
+    assert!(sb.home.join(".local/bin").join(support::exe("thurbox-auto-continue")).exists());
+    assert!(sb.ext_home.join("bin").join(support::exe("thurbox-auto-continue")).is_file());
     assert!(sb.ext_home.join("config.toml").is_file());
     assert!(stopfailure_hooks(&sb.settings()).iter().any(|c| c.contains("thurbox-auto-continue record")));
     let sweep = sb.cli(&["automation", "list"]).as_array().unwrap().iter().any(|a| a["name"] == "auto-continue-sweep");
     assert!(sweep, "the fallback sweep is scheduled");
 
-    let out = sb.command("sh").args([script, "--uninstall"]).output().unwrap();
+    let out = support::output_within(
+        sb.command(support::hook_shell()).args([script, "--uninstall"]),
+        "install.sh --uninstall",
+    );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!sb.cli(&["extension", "list"]).as_array().unwrap().iter().any(|e| e["name"] == "auto-continue"));
-    assert!(!sb.home.join(".local/bin/thurbox-auto-continue").exists());
+    assert!(!sb.home.join(".local/bin").join(support::exe("thurbox-auto-continue")).exists());
     assert!(stopfailure_hooks(&sb.settings()).iter().all(|c| !c.contains("thurbox-auto-continue")));
     assert_eq!(sb.settings()["hooks"]["Stop"][0]["hooks"][0]["command"], "echo user-stop-hook");
 
     // A second uninstall, with nothing left to remove, still succeeds.
-    let out = sb.command("sh").args([script, "--uninstall"]).output().unwrap();
+    let out = support::output_within(
+        sb.command(support::hook_shell()).args([script, "--uninstall"]),
+        "install.sh --uninstall",
+    );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }

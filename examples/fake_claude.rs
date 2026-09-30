@@ -9,7 +9,9 @@
 //!   the rejection followed by bookkeeping rows and the prompt row written after
 //!   the rejection;
 //! - runs hooks the way Claude does: from the user's `settings.json` **and**
-//!   every `--settings` file, `StopFailure` matched on the error type.
+//!   every `--settings` file, `StopFailure` matched on the error type, each
+//!   under `sh -c` — on Windows under Git Bash, the shell Claude Code runs its
+//!   hooks with there (`CLAUDE_CODE_GIT_BASH_PATH`, else the one beside `git`).
 //!
 //! It is driven by files under `$FAKE_CLAUDE_CTL/<$THURBOX_SESSION>/`:
 //!
@@ -288,8 +290,29 @@ impl Fake {
     }
 }
 
+/// The shell a hook command runs under.
+fn hook_shell() -> PathBuf {
+    if !cfg!(windows) {
+        return PathBuf::from("sh");
+    }
+    if let Some(p) = std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH").filter(|p| !p.is_empty()) {
+        return PathBuf::from(p);
+    }
+    // Git for Windows' bash beside the `git.exe` on PATH (`<git>\\cmd`,
+    // `<git>\\bin` or `<git>\\mingw64\\bin`); never a bare `bash.exe` from PATH,
+    // which can be WSL's.
+    on_path("git.exe")
+        .and_then(|git| git.ancestors().skip(1).take(3).map(|d| d.join("bin").join("bash.exe")).find(|b| b.is_file()))
+        .unwrap_or_else(|| PathBuf::from("git-bash-not-found"))
+}
+
+fn on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
+}
+
 fn run_hook(cmd: &str, stdin: &str, timeout_secs: u64) -> (i32, usize) {
-    let Ok(mut child) = Command::new("sh")
+    let Ok(mut child) = Command::new(hook_shell())
         .arg("-c")
         .arg(cmd)
         .stdin(Stdio::piped())
@@ -322,9 +345,50 @@ fn run_hook(cmd: &str, stdin: &str, timeout_secs: u64) -> (i32, usize) {
 }
 
 fn claude_config() -> PathBuf {
+    let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".claude"))
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os(home).unwrap()).join(".claude"))
+}
+
+/// Raw keys, no echo: the composer is drawn by us, as Claude draws its own.
+#[cfg(unix)]
+fn raw_mode() {
+    let _ = Command::new("stty").args(["-icanon", "-echo", "min", "1"]).stdin(Stdio::inherit()).status();
+}
+
+/// The same on a Windows console (a psmux pane is a ConPTY): no line editing,
+/// no echo, Ctrl-keys as bytes, and keys arriving as VT sequences — what
+/// Claude Code's own input layer asks for.
+#[cfg(windows)]
+fn raw_mode() {
+    type Handle = *mut std::ffi::c_void;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetStdHandle(which: u32) -> Handle;
+        fn GetConsoleMode(h: Handle, mode: *mut u32) -> i32;
+        fn SetConsoleMode(h: Handle, mode: u32) -> i32;
+    }
+    const STD_INPUT: u32 = -10i32 as u32;
+    const STD_OUTPUT: u32 = -11i32 as u32;
+    const PROCESSED_INPUT: u32 = 0x1;
+    const LINE_INPUT: u32 = 0x2;
+    const ECHO_INPUT: u32 = 0x4;
+    const VT_INPUT: u32 = 0x200;
+    const VT_PROCESSING: u32 = 0x4;
+    // SAFETY: plain Win32 calls on this process's own standard handles.
+    unsafe {
+        let input = GetStdHandle(STD_INPUT);
+        let mut mode = 0;
+        if GetConsoleMode(input, &mut mode) != 0 {
+            SetConsoleMode(input, (mode & !(PROCESSED_INPUT | LINE_INPUT | ECHO_INPUT)) | VT_INPUT);
+        }
+        let output = GetStdHandle(STD_OUTPUT);
+        let mut mode = 0;
+        if GetConsoleMode(output, &mut mode) != 0 {
+            SetConsoleMode(output, mode | VT_PROCESSING);
+        }
+    }
 }
 
 fn main() {
@@ -347,8 +411,7 @@ fn main() {
     std::fs::create_dir_all(&ctl).unwrap();
     let transcript = claude_config().join("projects").join(munge(&cwd)).join(format!("{session_id}.jsonl"));
 
-    // Raw keys, no echo: the composer is drawn by us, as Claude draws its own.
-    let _ = Command::new("stty").args(["-icanon", "-echo", "min", "1"]).stdin(Stdio::inherit()).status();
+    raw_mode();
 
     let mut fake = Fake {
         ctl,
@@ -363,6 +426,15 @@ fn main() {
         parent: None,
         resume_at: None,
     };
+    // What a hook will see, for a failed test to show.
+    let exe = |n: &str| format!("{n}{}", std::env::consts::EXE_SUFFIX);
+    for name in ["thurbox-cli", "thurbox-auto-continue"] {
+        let found = on_path(&exe(name)).map(|p| p.display().to_string()).unwrap_or_else(|| "-".into());
+        append(&fake.ctl.join("env.log"), &format!("{name}={found}"));
+    }
+    let session = std::env::var("THURBOX_SESSION").unwrap_or_else(|_| "-".into());
+    append(&fake.ctl.join("env.log"), &format!("THURBOX_SESSION={session}"));
+    append(&fake.ctl.join("env.log"), &format!("hook_shell={}", hook_shell().display()));
     fake.hooks("SessionStart", "startup", json!({ "source": "startup" }));
     // Claude asks for bracketed paste; tmux then brackets what is pasted.
     print!("\x1b[?2004h");
@@ -385,7 +457,14 @@ fn main() {
             fake.draw();
         }
         let byte = match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(b) => b,
+            Ok(b) => {
+                // Control bytes as received, so a key that arrives in some
+                // other encoding shows what it was.
+                if b < 0x20 || b == 0x7f {
+                    append(&fake.ctl.join("bytes.log"), &format!("{b:02x}"));
+                }
+                b
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         };

@@ -63,12 +63,68 @@ jobs:
           echo "TAC_THURBOX_CLI=$cli" >> "$GITHUB_ENV"
       - run: cargo test --locked
 
+  # The same suite on native Windows: psmux as the multiplexer, Thurbox's
+  # PowerShell keeper, `cmd /C` for every Exec automation, and Claude's hooks
+  # under Git Bash. Nothing here is cross-compiled or inferred from Linux.
+  test-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        thurbox: [v2.36.2, latest]
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      # psmux publishes no checksums file, so the zip's digest is pinned here.
+      PSMUX_VERSION: v3.3.8
+      PSMUX_SHA256: 1ad127ba937194a890b933a73d9b023e297bd73dc742abd841bf159984c2effe
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Exclude build dirs from Defender real-time scanning
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+          Add-MpPreference -ExclusionPath "$env:USERPROFILE\.cargo"
+          Add-MpPreference -ExclusionPath "$env:USERPROFILE\.rustup"
+          Add-MpPreference -ExclusionPath "$env:RUNNER_TEMP"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install psmux ${{ env.PSMUX_VERSION }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir="$RUNNER_TEMP/psmux"
+          mkdir -p "$dir"
+          gh release download "$PSMUX_VERSION" --repo psmux/psmux --dir "$dir" --pattern '*-windows-x64.zip'
+          echo "$PSMUX_SHA256  $(ls "$dir"/*.zip)" | sha256sum -c -
+          unzip -q "$dir"/*.zip -d "$dir"
+          "$dir/psmux.exe" -V
+          echo "TAC_PSMUX=$(cygpath -w "$dir/psmux.exe")" >> "$GITHUB_ENV"
+      - name: Download thurbox ${{ matrix.thurbox }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          target=x86_64-pc-windows-msvc
+          tag=${{ matrix.thurbox }}
+          [ "$tag" = latest ] && tag=
+          dir="$RUNNER_TEMP/thurbox"
+          mkdir -p "$dir"
+          gh release download $tag --repo Thurbeen/thurbox --dir "$dir" \
+            --pattern "*-$target.zip" --pattern '*-checksums.txt'
+          (cd "$dir" && grep -- "-$target.zip" ./*-checksums.txt | sha256sum -c -)
+          unzip -q "$dir"/*-"$target".zip -d "$dir"
+          "$dir/thurbox-cli.exe" --version
+          echo "TAC_THURBOX_CLI=$(cygpath -w "$dir/thurbox-cli.exe")" >> "$GITHUB_ENV"
+      - run: cargo test --locked --no-fail-fast
+
   # The one check the main-branch ruleset requires, so adding a job here never
   # means editing the ruleset.
   all-checks:
     name: All Checks
     if: always()
-    needs: [lint, test]
+    needs: [lint, test, test-windows]
     runs-on: ubuntu-24.04
     steps:
       - name: Verify all checks passed
