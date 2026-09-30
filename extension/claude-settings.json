@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "StopFailure": [
+      {
+        "matcher": "rate_limit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "thurbox-auto-continue record >/dev/null 2>&1 || true  # managed by thurbox `extension install` — do not edit",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
