@@ -115,9 +115,11 @@ local function badge_line(name)
       id = s.id
     end
   end
-  for _, node in ipairs(H.find(tree, function(n)
-    return n.role == "row" and n.id == id
-  end)) do
+  for _, node in
+    ipairs(H.find(tree, function(n)
+      return n.role == "row" and n.id == id
+    end))
+  do
     return H.line_text(node.text[1])
   end
   return ""
@@ -126,9 +128,9 @@ end
 for raw in io.lines() do
   local verb, rest = raw:match("^%s*(%S+)%s?(.*)$")
   if verb == nil or verb:sub(1, 1) == "#" then
-    goto continue
-  end
-  if verb == "trust" or verb == "untrust" then
+    -- A blank line or a comment: nothing to do.
+    rest = nil
+  elseif verb == "trust" or verb == "untrust" then
     pane.trusted = verb == "trust"
     badge.trusted = pane.trusted
   elseif verb == "settle" then
@@ -200,6 +202,5 @@ for raw in io.lines() do
   else
     fail("unknown step " .. raw)
   end
-  ::continue::
 end
 os.exit(0)

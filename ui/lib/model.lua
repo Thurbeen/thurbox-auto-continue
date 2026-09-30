@@ -16,7 +16,8 @@ local model = {}
 -- JSON. The sandbox has no decoder, and the contract is JSON.
 ---------------------------------------------------------------------------
 
-local ESCAPES = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
+local ESCAPES =
+  { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
 
 --- Decode one JSON document. `null` reads as absent (nil), which is how every
 --- caller here treats it. Returns nil and a reason for anything that is not
@@ -291,7 +292,8 @@ function model.parse_run(run)
   end
   local data = model.decode(run.stdout)
   if run.status ~= 0 then
-    local why = type(data) == "table" and data.error or first_line(run.stderr ~= "" and run.stderr or run.stdout)
+    local why = type(data) == "table" and data.error
+      or first_line(run.stderr ~= "" and run.stderr or run.stdout)
     return { kind = "failed", error = (why ~= "" and why) or ("exit " .. tostring(run.status)) }
   end
   if type(data) ~= "table" then
@@ -318,7 +320,8 @@ function model.parse_write(run)
   if run.status == 0 and type(data) == "table" and data.ok == true then
     return { kind = "ok", data = data }
   end
-  local why = type(data) == "table" and data.error or first_line(run.stderr ~= "" and run.stderr or run.stdout)
+  local why = type(data) == "table" and data.error
+    or first_line(run.stderr ~= "" and run.stderr or run.stdout)
   return { kind = "refused", error = (why ~= "" and why) or ("exit " .. tostring(run.status)) }
 end
 
@@ -354,7 +357,8 @@ function model.validate(key, value)
     end
     local lead = value:sub(1, 1)
     if lead == "/" or lead == "!" or lead == "#" then
-      return nil, "the message must not start with / ! or # — Claude reads those as a command, a shell or a memory"
+      return nil,
+        "the message must not start with / ! or # — Claude reads those as a command, a shell or a memory"
     end
     return value
   elseif key == "delay_secs" then
@@ -385,13 +389,13 @@ function model.duration(ms)
   elseif s < 60 then
     return s .. "s"
   elseif s < 3600 then
-    local m, r = s // 60, s % 60
+    local m, r = math.floor(s / 60), s % 60
     return r > 0 and (m .. "m " .. r .. "s") or (m .. "m")
   elseif s < 86400 then
-    local h, m = s // 3600, (s % 3600) // 60
+    local h, m = math.floor(s / 3600), math.floor((s % 3600) / 60)
     return m > 0 and (h .. "h " .. m .. "m") or (h .. "h")
   end
-  local d, h = s // 86400, (s % 86400) // 3600
+  local d, h = math.floor(s / 86400), math.floor((s % 86400) / 3600)
   return h > 0 and (d .. "d " .. h .. "h") or (d .. "d")
 end
 
@@ -498,12 +502,23 @@ function model.summary(row, now)
     return { text = "no limit yet", tone = row.enabled and "idle" or "muted" }
   end
   if ep.state == "armed" then
+    local send
+    if
+      type(ep.next_send_at_ms) == "number"
+      and type(now) == "number"
+      and ep.next_send_at_ms <= now
+    then
+      -- Due: the one-shot fires on Thurbox's next heartbeat, within a minute.
+      send = "send due on the next heartbeat"
+    else
+      send = "send " .. model.relative(ep.next_send_at_ms, now)
+    end
     return {
       text = string.format(
-        "armed · %s resets %s · send %s",
+        "armed · %s resets %s · %s",
         tostring(ep.window or "?"),
         model.relative(ep.resets_at_ms, now),
-        model.relative(ep.next_send_at_ms, now)
+        send
       ),
       tone = "armed",
     }
@@ -516,7 +531,10 @@ function model.summary(row, now)
   if ep.state == "sent" then
     return { text = "sent " .. model.relative(ep.sent_at_ms or at, now), tone = "ok" }
   elseif ep.state == "unconfirmed" then
-    return { text = "sent, not confirmed " .. model.relative(ep.sent_at_ms or at, now), tone = "warn" }
+    return {
+      text = "sent, not confirmed " .. model.relative(ep.sent_at_ms or at, now),
+      tone = "warn",
+    }
   elseif ep.state == "skipped" then
     local words, superseded = model.reason(ep.reason)
     if superseded then
@@ -524,9 +542,15 @@ function model.summary(row, now)
     end
     return { text = "skipped " .. model.relative(at, now) .. " · " .. words, tone = "warn" }
   elseif ep.state == "gave-up" then
-    return { text = "gave up " .. model.relative(at, now) .. " · " .. (model.reason(ep.reason)), tone = "bad" }
+    return {
+      text = "gave up " .. model.relative(at, now) .. " · " .. (model.reason(ep.reason)),
+      tone = "bad",
+    }
   elseif ep.state == "abandoned" then
-    return { text = "abandoned " .. model.relative(at, now) .. " · a run stopped mid-send; never resent", tone = "bad" }
+    return {
+      text = "abandoned " .. model.relative(at, now) .. " · a run stopped mid-send; never resent",
+      tone = "bad",
+    }
   end
   return { text = tostring(ep.label or ep.state), tone = "muted" }
 end
@@ -545,7 +569,13 @@ function model.badge(row, now)
     return nil
   end
   if ep.state == "armed" then
-    local left = type(ep.next_send_at_ms) == "number" and type(now) == "number" and (ep.next_send_at_ms - now) or nil
+    local left = type(ep.next_send_at_ms) == "number"
+        and type(now) == "number"
+        and (ep.next_send_at_ms - now)
+      or nil
+    if left and left <= 0 then
+      return { text = "⏸ due", tone = "armed" }
+    end
     return { text = "⏸ " .. (left and model.duration(left) or "?"), tone = "armed" }
   elseif ep.state == "claimed" then
     return { text = "…", tone = "armed" }

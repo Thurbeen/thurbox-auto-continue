@@ -82,7 +82,10 @@ local text_api = {
     elseif type(opts) == "table" then
       ellipsis = opts.ellipsis or ellipsis
       side = opts.side or side
-      assert(side == "right" or side == "left" or side == "middle", "unknown side " .. tostring(side))
+      assert(
+        side == "right" or side == "left" or side == "middle",
+        "unknown side " .. tostring(side)
+      )
     end
     local w = width(s)
     if w <= cols then
@@ -368,7 +371,8 @@ local run_impl = function(key, program, opts)
   assert(type(key) == "string" and key ~= "", "run: a key is required")
   assert(type(program) == "string" and program ~= "", "run: a program is required")
   opts = opts or {}
-  local ask = { key = key, program = program, session = opts.session, ttl = opts.ttl, refresh = opts.refresh }
+  local ask =
+    { key = key, program = program, session = opts.session, ttl = opts.ttl, refresh = opts.refresh }
   H.asked[#H.asked + 1] = ask
   if H.rendering then
     H.render_runs[#H.render_runs + 1] = ask
@@ -401,7 +405,15 @@ H.render_runs = {}
 function H.render(p, width, height, focused)
   enter(p)
   H.rendering = true
-  local ok, tree = pcall(p.def.render, { width = width, height = height, focused = focused ~= false, frame = 1, name = p.def.name, slot = p.def.slot or "center", elapsed = 0 })
+  local ok, tree = pcall(p.def.render, {
+    width = width,
+    height = height,
+    focused = focused ~= false,
+    frame = 1,
+    name = p.def.name,
+    slot = p.def.slot or "center",
+    elapsed = 0,
+  })
   H.rendering = false
   assert(ok, tree)
   return tree
@@ -582,7 +594,9 @@ function H.live(cwd_of)
     H.serial = (H.serial or 0) + 1
     local errfile = assert(os.getenv("SCRATCH"), "set SCRATCH") .. "/stderr-" .. H.serial
     local script = "cd " .. H.quote(cwd) .. " && " .. item.ask.program
-    local pipe = assert(io.popen("sh -c " .. H.quote(script) .. " 2>" .. H.quote(errfile) .. "; echo \"__exit:$?\""))
+    local pipe = assert(
+      io.popen("sh -c " .. H.quote(script) .. " 2>" .. H.quote(errfile) .. '; echo "__exit:$?"')
+    )
     local out = pipe:read("a")
     pipe:close()
     local stderr = read_file(errfile)
@@ -734,7 +748,10 @@ end
 
 function H.eq(actual, expected, what)
   if actual ~= expected then
-    error((what or "value") .. ": expected " .. tostring(expected) .. ", got " .. tostring(actual), 2)
+    error(
+      (what or "value") .. ": expected " .. tostring(expected) .. ", got " .. tostring(actual),
+      2
+    )
   end
 end
 
@@ -746,7 +763,10 @@ end
 
 function H.absent(haystack, needle, what)
   if tostring(haystack):find(needle, 1, true) then
-    error((what or "text") .. " unexpectedly contains «" .. needle .. "»:\n" .. tostring(haystack), 2)
+    error(
+      (what or "text") .. " unexpectedly contains «" .. needle .. "»:\n" .. tostring(haystack),
+      2
+    )
   end
 end
 

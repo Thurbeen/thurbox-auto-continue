@@ -49,9 +49,11 @@ local badge_untrusted = H.load(BADGE, { trusted = false })
 
 local function rows(tree)
   local out = {}
-  for _, node in ipairs(H.find(tree, function(n)
-    return n.role == "row" and type(n.id) == "string"
-  end)) do
+  for _, node in
+    ipairs(H.find(tree, function(n)
+      return n.role == "row" and type(n.id) == "string"
+    end))
+  do
     out[node.id] = H.line_text(node.text[1])
   end
   return out

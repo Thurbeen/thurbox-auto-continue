@@ -58,7 +58,8 @@ version_check = false
 auto_update = false
 notifications = false
 SETTINGS
-thurbox-cli extension activate ui-skill >/dev/null
+# The built-in skill installer would announce itself in the recording.
+thurbox-cli extension deactivate ui-skill >/dev/null
 cat > "$S/bin/fake-codex" <<'CODEX'
 #!/bin/sh
 printf 'codex (a stub for the demo: not Claude, so auto-continue leaves it alone)\n'

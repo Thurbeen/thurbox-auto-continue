@@ -10,7 +10,8 @@ local NOW = 1790762010000
 local MIN = 60 * 1000
 
 H.test("decode reads the contract's JSON: objects, arrays, escapes, null as absent", function()
-  local v = assert(model.decode('{"a":1,"b":[true,false,"x\\"y\\u00e9\\n"],"c":null,"d":{"e":-2.5e1}}'))
+  local v =
+    assert(model.decode('{"a":1,"b":[true,false,"x\\"y\\u00e9\\n"],"c":null,"d":{"e":-2.5e1}}'))
   H.eq(v.a, 1)
   H.eq(v.b[1], true)
   H.eq(v.b[2], false)
@@ -47,7 +48,16 @@ H.test("a value is one shell word whatever it holds", function()
   os.execute("chmod +x " .. H.quote(fake))
   local tricky = [[it's "fine" $HOME `id` ; exit 1]]
   local cmd = model.set_cmd("message", tricky, "s-1")
-  local pipe = assert(io.popen("env -i HOME=" .. H.quote(dir .. "/nohome") .. " PATH=" .. H.quote(bin .. ":/usr/bin:/bin") .. " sh -c " .. H.quote(cmd)))
+  local pipe = assert(
+    io.popen(
+      "env -i HOME="
+        .. H.quote(dir .. "/nohome")
+        .. " PATH="
+        .. H.quote(bin .. ":/usr/bin:/bin")
+        .. " sh -c "
+        .. H.quote(cmd)
+    )
+  )
   local out = pipe:read("a")
   pipe:close()
   H.eq(out, "[config]\n[set]\n[message]\n[" .. tricky .. "]\n[--session]\n[s-1]\n[--json]\n")
@@ -55,8 +65,14 @@ end)
 
 H.test("the setters and readers spell the contract's commands", function()
   H.contains(model.set_cmd("delay_secs", "60", nil), "'config' 'set' 'delay_secs' '60' '--json'")
-  H.contains(model.set_cmd("enabled", "on", "s-9"), "'config' 'set' 'enabled' 'on' '--session' 's-9' '--json'")
-  H.contains(model.unset_cmd("message", "s-9"), "'config' 'unset' 'message' '--session' 's-9' '--json'")
+  H.contains(
+    model.set_cmd("enabled", "on", "s-9"),
+    "'config' 'set' 'enabled' 'on' '--session' 's-9' '--json'"
+  )
+  H.contains(
+    model.unset_cmd("message", "s-9"),
+    "'config' 'unset' 'message' '--session' 's-9' '--json'"
+  )
   H.contains(model.show_cmd("s-9"), "'config' 'show' '--session' 's-9' '--json'")
   H.contains(model.show_cmd(nil), "'config' 'show' '--json'")
   H.contains(model.status_cmd(), "'status' '--json'")
@@ -70,7 +86,11 @@ H.test("validate: a message is one line of 1-200 characters, not a command", fun
   H.contains(e, "blank")
   _, e = model.validate("message", string.rep("x", 201))
   H.contains(e, "200")
-  H.eq((model.validate("message", string.rep("é", 200))), string.rep("é", 200), "200 characters, not bytes")
+  H.eq(
+    (model.validate("message", string.rep("é", 200))),
+    string.rep("é", 200),
+    "200 characters, not bytes"
+  )
   _, e = model.validate("message", "one\ntwo")
   H.contains(e, "one line")
   _, e = model.validate("message", "tab\there")
@@ -94,31 +114,57 @@ H.test("validate: a delay is whole seconds, 0 to 86400", function()
   H.contains(e, "0")
 end)
 
-H.test("parse_run tells pending, failed, not installed, garbage and old apart from an answer", function()
-  H.eq(model.parse_run(nil).kind, "pending")
-  H.eq(model.parse_run({ state = "pending" }).kind, "pending")
-  local r = model.parse_run({ state = "failed", error = "no session x to run it in" })
-  H.eq(r.kind, "failed")
-  H.contains(r.error, "no session")
-  H.eq(model.parse_run({ state = "done", status = 127, stdout = "", stderr = "" }).kind, "missing-binary")
-  r = model.parse_run({ state = "done", status = 0, stdout = "not json" })
-  H.eq(r.kind, "bad-output")
-  H.eq(model.parse_run({ state = "done", status = 0, stdout = '{"schema":1,"sessions":[]}' }).kind, "outdated")
-  r = model.parse_run({ state = "done", status = 0, stdout = '{"schema":2,"sessions":[],"global":{}}' })
-  H.eq(r.kind, "ok")
-  H.eq(r.data.schema, 2)
-  r = model.parse_run({ state = "done", status = 0, timed_out = true, stdout = "" })
-  H.eq(r.kind, "failed")
-  H.contains(r.error, "timed out")
-end)
+H.test(
+  "parse_run tells pending, failed, not installed, garbage and old apart from an answer",
+  function()
+    H.eq(model.parse_run(nil).kind, "pending")
+    H.eq(model.parse_run({ state = "pending" }).kind, "pending")
+    local r = model.parse_run({ state = "failed", error = "no session x to run it in" })
+    H.eq(r.kind, "failed")
+    H.contains(r.error, "no session")
+    H.eq(
+      model.parse_run({ state = "done", status = 127, stdout = "", stderr = "" }).kind,
+      "missing-binary"
+    )
+    r = model.parse_run({ state = "done", status = 0, stdout = "not json" })
+    H.eq(r.kind, "bad-output")
+    H.eq(
+      model.parse_run({ state = "done", status = 0, stdout = '{"schema":1,"sessions":[]}' }).kind,
+      "outdated"
+    )
+    r = model.parse_run({
+      state = "done",
+      status = 0,
+      stdout = '{"schema":2,"sessions":[],"global":{}}',
+    })
+    H.eq(r.kind, "ok")
+    H.eq(r.data.schema, 2)
+    r = model.parse_run({ state = "done", status = 0, timed_out = true, stdout = "" })
+    H.eq(r.kind, "failed")
+    H.contains(r.error, "timed out")
+  end
+)
 
 H.test("parse_write reads a setter's one JSON object, whether it worked or not", function()
-  local w = model.parse_write({ state = "done", status = 0, stdout = '{"ok":true,"scope":"session","key":"message","value":"x"}' })
+  local w = model.parse_write({
+    state = "done",
+    status = 0,
+    stdout = '{"ok":true,"scope":"session","key":"message","value":"x"}',
+  })
   H.eq(w.kind, "ok")
-  w = model.parse_write({ state = "done", status = 1, stdout = '{"ok":false,"error":"`message` must not start with / or !"}' })
+  w = model.parse_write({
+    state = "done",
+    status = 1,
+    stdout = '{"ok":false,"error":"`message` must not start with / or !"}',
+  })
   H.eq(w.kind, "refused")
   H.contains(w.error, "must not start")
-  w = model.parse_write({ state = "done", status = 2, stdout = "", stderr = "error: unexpected argument" })
+  w = model.parse_write({
+    state = "done",
+    status = 2,
+    stdout = "",
+    stderr = "error: unexpected argument",
+  })
   H.eq(w.kind, "refused")
   H.contains(w.error, "unexpected argument")
   H.eq(model.parse_write(nil).kind, "pending")
@@ -168,13 +214,36 @@ local function row(over)
 end
 
 H.test("badge: armed counts down to the send", function()
-  local b = model.badge(row({ episode = { state = "armed", next_send_at_ms = NOW + 63 * MIN, resets_at_ms = NOW + 58 * MIN } }), NOW)
+  local b = model.badge(
+    row({
+      episode = { state = "armed", next_send_at_ms = NOW + 63 * MIN, resets_at_ms = NOW + 58 * MIN },
+    }),
+    NOW
+  )
   H.contains(b.text, "1h 3m")
+end)
+
+H.test("badge and summary: an armed send whose time has come reads due, not now", function()
+  local r = row({
+    episode = {
+      state = "armed",
+      window = "five_hour",
+      next_send_at_ms = NOW - 5000,
+      resets_at_ms = NOW - 10000,
+    },
+  })
+  H.contains(model.badge(r, NOW).text, "due")
+  local s = model.summary(r, NOW).text
+  H.contains(s, "send due")
+  H.contains(s, "the next heartbeat")
 end)
 
 H.test("badge: each outcome has its own mark", function()
   local function mark(state, reason)
-    local r = row({ episode = { state = state, reason = reason }, last_outcome = { state = state, reason = reason } })
+    local r = row({
+      episode = { state = state, reason = reason },
+      last_outcome = { state = state, reason = reason },
+    })
     return model.badge(r, NOW).text
   end
   H.contains(mark("sent"), "✓")
@@ -191,8 +260,25 @@ H.test("badge: on and waiting shows the switch; off shows nothing", function()
 end)
 
 H.test("badge: never for a session that is not Claude's, nor one nobody can read", function()
-  H.eq(model.badge(row({ agent = "codex", eligible = false, ineligible_reason = "not-claude", enabled = false }), NOW), nil)
-  H.eq(model.badge(row({ eligible = false, ineligible_reason = "remote", enabled = false, host = { backend = "ssh:old", reason = "not-installed" } }), NOW), nil)
+  H.eq(
+    model.badge(
+      row({ agent = "codex", eligible = false, ineligible_reason = "not-claude", enabled = false }),
+      NOW
+    ),
+    nil
+  )
+  H.eq(
+    model.badge(
+      row({
+        eligible = false,
+        ineligible_reason = "remote",
+        enabled = false,
+        host = { backend = "ssh:old", reason = "not-installed" },
+      }),
+      NOW
+    ),
+    nil
+  )
 end)
 
 H.test("reconcile mirrors a Settings change to config.toml, and config back to Settings", function()

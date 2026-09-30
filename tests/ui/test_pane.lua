@@ -213,58 +213,69 @@ H.test("the selected session's detail: window, reset, next send, attempts", func
   H.contains(s, "attempt 1 of 2")
 end)
 
-H.test("the editor shows the prompt only from `config show`, with where each value comes from", function()
-  local p = fresh()
-  ready(p)
-  select_row(p, "worker")
-  local s = screen(p)
-  H.contains(s, "reading settings")
-  local ask = answer(p, "'config' 'show' '--session' '" .. id("0a") .. "'", SHOW_WORKER)
-  H.eq(ask.session, id("0a"))
-  s = screen(p)
-  H.contains(s, "keep going")
-  H.contains(s, "session")
-  H.contains(s, "60 s")
-  H.absent(s, SECRET)
-end)
+H.test(
+  "the editor shows the prompt only from `config show`, with where each value comes from",
+  function()
+    local p = fresh()
+    ready(p)
+    select_row(p, "worker")
+    local s = screen(p)
+    H.contains(s, "reading settings")
+    local ask = answer(p, "'config' 'show' '--session' '" .. id("0a") .. "'", SHOW_WORKER)
+    H.eq(ask.session, id("0a"))
+    s = screen(p)
+    H.contains(s, "keep going")
+    H.contains(s, "session")
+    H.contains(s, "60 s")
+    H.absent(s, SECRET)
+  end
+)
 
-H.test("the global row edits config.toml, and its editor reads `config show` without --session", function()
-  local p = fresh()
-  ready(p)
-  local s = select_row(p, "Every Claude session")
-  H.contains(s, "config.toml")
-  answer(p, "'config' 'show' '--json'", SHOW_GLOBAL)
-  s = screen(p)
-  H.contains(s, "continue")
-  H.contains(s, "300 s")
-  H.contains(s, "default")
-end)
+H.test(
+  "the global row edits config.toml, and its editor reads `config show` without --session",
+  function()
+    local p = fresh()
+    ready(p)
+    local s = select_row(p, "Every Claude session")
+    H.contains(s, "config.toml")
+    answer(p, "'config' 'show' '--json'", SHOW_GLOBAL)
+    s = screen(p)
+    H.contains(s, "continue")
+    H.contains(s, "300 s")
+    H.contains(s, "default")
+  end
+)
 
-H.test("editing a session's message: validated, then `config set --session` on the right machine", function()
-  local p = fresh()
-  ready(p)
-  select_row(p, "worker")
-  answer(p, "'config' 'show'", SHOW_WORKER)
-  screen(p)
-  H.key(p, "m")
-  local s = screen(p)
-  H.contains(s, "now: keep going", "the current value, from config show, as the placeholder")
-  H.key(p, "enter")
-  s = screen(p)
-  H.contains(s, "blank", "a blank message is refused before anything runs")
-  H.eq(#H.asked_matching("'config' 'set'"), 0)
-  H.type(p, "/compact")
-  H.key(p, "enter")
-  H.contains(screen(p), "must not start with")
-  H.eq(#H.asked_matching("'config' 'set'"), 0)
-  retype(p, "m", string.rep("x", 201))
-  H.contains(screen(p), "200")
-  retype(p, "m", "resume the task")
-  local sets = H.asked_matching("'config' 'set' 'message' 'resume the task' '--session' '" .. id("0a") .. "'")
-  H.eq(#sets, 1)
-  H.eq(sets[1].session, id("0a"))
-  H.contains(screen(p), "saving")
-end)
+H.test(
+  "editing a session's message: validated, then `config set --session` on the right machine",
+  function()
+    local p = fresh()
+    ready(p)
+    select_row(p, "worker")
+    answer(p, "'config' 'show'", SHOW_WORKER)
+    screen(p)
+    H.key(p, "m")
+    local s = screen(p)
+    H.contains(s, "now: keep going", "the current value, from config show, as the placeholder")
+    H.key(p, "enter")
+    s = screen(p)
+    H.contains(s, "blank", "a blank message is refused before anything runs")
+    H.eq(#H.asked_matching("'config' 'set'"), 0)
+    H.type(p, "/compact")
+    H.key(p, "enter")
+    H.contains(screen(p), "must not start with")
+    H.eq(#H.asked_matching("'config' 'set'"), 0)
+    retype(p, "m", string.rep("x", 201))
+    H.contains(screen(p), "200")
+    retype(p, "m", "resume the task")
+    local sets = H.asked_matching(
+      "'config' 'set' 'message' 'resume the task' '--session' '" .. id("0a") .. "'"
+    )
+    H.eq(#sets, 1)
+    H.eq(sets[1].session, id("0a"))
+    H.contains(screen(p), "saving")
+  end
+)
 
 H.test("a refusal from the CLI is shown in the pane, not swallowed", function()
   local p = fresh()
@@ -275,7 +286,12 @@ H.test("a refusal from the CLI is shown in the pane, not swallowed", function()
   H.contains(screen(p), "0 to 86400")
   H.eq(#H.asked_matching("'config' 'set'"), 0, "a negative delay never reaches the CLI")
   retype(p, "d", "90")
-  answer(p, "'config' 'set' 'delay_secs' '90'", '{"ok":false,"error":"the host refused: disk full"}', 1)
+  answer(
+    p,
+    "'config' 'set' 'delay_secs' '90'",
+    '{"ok":false,"error":"the host refused: disk full"}',
+    1
+  )
   local s = screen(p)
   H.contains(s, "✗")
   H.contains(s, "disk full")
@@ -289,7 +305,11 @@ H.test("a write that lands refreshes status and the editor", function()
   retype(p, "d", "90")
   local before_status = #H.asked_matching("'status' '--json'")
   local before_show = #H.asked_matching("'config' 'show'")
-  answer(p, "'config' 'set' 'delay_secs' '90'", '{"ok":true,"scope":"session","key":"delay_secs","value":"90"}')
+  answer(
+    p,
+    "'config' 'set' 'delay_secs' '90'",
+    '{"ok":true,"scope":"session","key":"delay_secs","value":"90"}'
+  )
   local s = screen(p)
   H.contains(s, "✓")
   H.truthy(#H.asked_matching("'status' '--json'") > before_status, "status asked again")
@@ -300,9 +320,17 @@ H.test("enabled cycles inherit → on → off → inherit for a session", functi
   local p = fresh()
   ready(p)
   select_row(p, "docs")
-  answer(p, "'config' 'show'", '{"enabled":{"value":false,"source":"default"},"message":{"value":"continue","source":"default"},"delay_secs":{"value":300,"source":"default"}}')
+  answer(
+    p,
+    "'config' 'show'",
+    '{"enabled":{"value":false,"source":"default"},"message":{"value":"continue","source":"default"},"delay_secs":{"value":300,"source":"default"}}'
+  )
   H.key(p, "e")
-  H.eq(#H.asked_matching("'config' 'set' 'enabled' 'on' '--session' '" .. id("0c") .. "'"), 1, "inherit → on")
+  H.eq(
+    #H.asked_matching("'config' 'set' 'enabled' 'on' '--session' '" .. id("0c") .. "'"),
+    1,
+    "inherit → on"
+  )
 end)
 
 H.test("enabled on an overridden session steps to off, then back to the global", function()
@@ -310,7 +338,11 @@ H.test("enabled on an overridden session steps to off, then back to the global",
   ready(p)
   select_row(p, "worker")
   H.key(p, "e")
-  H.eq(#H.asked_matching("'config' 'set' 'enabled' 'off' '--session' '" .. id("0a") .. "'"), 1, "on → off")
+  H.eq(
+    #H.asked_matching("'config' 'set' 'enabled' 'off' '--session' '" .. id("0a") .. "'"),
+    1,
+    "on → off"
+  )
 end)
 
 H.test("a session that is not Claude's offers no control and runs nothing", function()
@@ -339,15 +371,18 @@ H.test("a session on a host that cannot be asked runs nothing and says why", fun
   H.contains(screen(p), "not installed on ssh:oldbox")
 end)
 
-H.test("a remote session's toggle goes through this machine's CLI, which reaches its host", function()
-  local p = fresh()
-  ready(p)
-  select_row(p, "on-devbox")
-  H.key(p, "e")
-  local sets = H.asked_matching("'config' 'set' 'enabled' 'off' '--session' '" .. id("0e") .. "'")
-  H.eq(#sets, 1)
-  H.eq(sets[1].session, id("0a"), "run from a local session: the CLI delegates to ssh:devbox")
-end)
+H.test(
+  "a remote session's toggle goes through this machine's CLI, which reaches its host",
+  function()
+    local p = fresh()
+    ready(p)
+    select_row(p, "on-devbox")
+    H.key(p, "e")
+    local sets = H.asked_matching("'config' 'set' 'enabled' 'off' '--session' '" .. id("0e") .. "'")
+    H.eq(#sets, 1)
+    H.eq(sets[1].session, id("0a"), "run from a local session: the CLI delegates to ssh:devbox")
+  end
+)
 
 H.test("with no local session, a remote session is asked on its own host", function()
   local p = fresh()
@@ -405,7 +440,11 @@ H.test("config.toml changed outside the TUI moves the Settings switch", function
   ready(p)
   H.event("focus.session", {})
   -- `thurbox-auto-continue config set enabled on` from a shell.
-  local on = STATUS:gsub('"enabled": { "value": false, "source": "default" }', '"enabled": { "value": true, "source": "global" }', 1)
+  local on = STATUS:gsub(
+    '"enabled": { "value": false, "source": "default" }',
+    '"enabled": { "value": true, "source": "global" }',
+    1
+  )
   local asks = H.asked_matching("'status' '--json'")
   H.answer(p, asks[#asks].key, on)
   H.reset_log()
@@ -419,7 +458,11 @@ end)
 H.test("an extension switched off is said up front: nothing is sent", function()
   local p = fresh()
   screen(p)
-  answer(p, "'status' '--json'", (STATUS:gsub('"extension_active": true', '"extension_active": false', 1)))
+  answer(
+    p,
+    "'status' '--json'",
+    (STATUS:gsub('"extension_active": true', '"extension_active": false', 1))
+  )
   local s = screen(p)
   H.contains(s, "inactive")
   H.contains(s, "nothing is sent")
@@ -428,7 +471,10 @@ end)
 H.test("a Settings write the kernel refuses is shown", function()
   local p = fresh()
   ready(p)
-  H.event("command.failed", { kind = "set", subject = "auto-continue.enabled", error = "not a flag" })
+  H.event(
+    "command.failed",
+    { kind = "set", subject = "auto-continue.enabled", error = "not a flag" }
+  )
   H.contains(screen(p), "not a flag")
 end)
 

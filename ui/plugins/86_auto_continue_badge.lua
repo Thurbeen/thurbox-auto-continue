@@ -116,7 +116,8 @@ return {
       local spans, used = cut(candidate.text[1], room)
       spans[#spans + 1] = { text = string.rep(" ", room - used) }
       -- A selected row's bar names no foreground, so the badge keeps its own.
-      spans[#spans + 1] = { text = mark, style = { fg = theme.role(TONE[badge.tone] or "text_muted") } }
+      spans[#spans + 1] =
+        { text = mark, style = { fg = theme.role(TONE[badge.tone] or "text_muted") } }
       candidate.text[1] = spans
       return candidate
     end)

@@ -252,7 +252,9 @@ local function reconcile()
   local config = type(global.enabled) == "table" and global.enabled.value == true or false
   local act = model.reconcile(setting_on(), config, state.mirror)
   if act.write ~= nil then
-    if write(GLOBAL, "enabled", act.write and "on" or "off", "the global switch (from Settings)") then
+    if
+      write(GLOBAL, "enabled", act.write and "on" or "off", "the global switch (from Settings)")
+    then
       state.mirror_wait = generation() + 1
     else
       return
@@ -284,7 +286,9 @@ local function cycle_enabled(target)
   if target == GLOBAL then
     local g = (status.data and status.data.global) or {}
     local on = not (type(g.enabled) == "table" and g.enabled.value == true)
-    if write(GLOBAL, "enabled", on and "on" or "off", "global switch " .. (on and "on" or "off")) then
+    if
+      write(GLOBAL, "enabled", on and "on" or "off", "global switch " .. (on and "on" or "off"))
+    then
       command("set", { text = SETTING, flag = on })
       state.mirror = on
       state.mirror_wait = generation() + 1
@@ -348,7 +352,12 @@ local function reset(target, key)
     notice(name, "error")
     return
   end
-  write(target, key, nil, name .. " " .. (key == "message" and "message" or "delay") .. " back to the global value")
+  write(
+    target,
+    key,
+    nil,
+    name .. " " .. (key == "message" and "message" or "delay") .. " back to the global value"
+  )
 end
 
 local function move(delta)
@@ -446,12 +455,22 @@ local function trust_view(ctx)
       type = "box",
       children = {
         blank(),
-        line({ span(" This pane runs thurbox-auto-continue to read and change its settings,", theme.text) }, w),
+        line({
+          span(
+            " This pane runs thurbox-auto-continue to read and change its settings,",
+            theme.text
+          ),
+        }, w),
         line({ span(" so it needs the run capability, which only you can grant:", theme.text) }, w),
         blank(),
         line({ span("   Ctrl+, (or F6) → ] → " .. FILE .. " → t", theme.accent) }, w),
         blank(),
-        line({ span(" Do the same for 86_auto_continue_badge.lua to see the badge on session rows.", theme.muted) }, w),
+        line({
+          span(
+            " Do the same for 86_auto_continue_badge.lua to see the badge on session rows.",
+            theme.muted
+          ),
+        }, w),
         line({ span(" Nothing is read or changed until then.", theme.muted) }, w),
         { type = "text", fill = 1, text = "" },
       },
@@ -465,19 +484,40 @@ local function status_banner(status, w)
   elseif status.kind == "empty" then
     return line({ span(" no session to run the CLI in — open any session", theme.muted) }, w)
   elseif status.kind == "missing-binary" then
-    return line({ span(" thurbox-auto-continue is not installed on this machine — see the README's Install", theme.bad) }, w)
+    return line({
+      span(
+        " thurbox-auto-continue is not installed on this machine — see the README's Install",
+        theme.bad
+      ),
+    }, w)
   elseif status.kind ~= "ok" then
-    return line({ span(" status unavailable: " .. tostring(status.error or status.kind), theme.bad) }, w)
+    return line(
+      { span(" status unavailable: " .. tostring(status.error or status.kind), theme.bad) },
+      w
+    )
   end
   local active = status.data.extension_active
   if active == false then
-    return line({ span(" extension inactive — nothing is sent (thurbox-cli extension activate auto-continue)", theme.bad) }, w)
+    return line({
+      span(
+        " extension inactive — nothing is sent (thurbox-cli extension activate auto-continue)",
+        theme.bad
+      ),
+    }, w)
   elseif active == nil then
-    return line({ span(" extension state unknown: thurbox-cli did not answer", theme.role("status_blocked")) }, w)
+    return line(
+      { span(" extension state unknown: thurbox-cli did not answer", theme.role("status_blocked")) },
+      w
+    )
   end
   local warnings = status.data.warnings or {}
   if #warnings > 0 then
-    return line({ span(" config.toml: " .. tostring(warnings[1]) .. " — nothing is sent until it is fixed", theme.bad) }, w)
+    return line({
+      span(
+        " config.toml: " .. tostring(warnings[1]) .. " — nothing is sent until it is fixed",
+        theme.bad
+      ),
+    }, w)
   end
   return line({ span(" extension active", theme.role("status_done")) }, w)
 end
@@ -503,11 +543,22 @@ local function global_row(status, is_sel, w)
       end
     end
     summary = span(
-      string.format("%s (%s) · %d of %d Claude sessions on", on and "on" or "off", source_text(g.enabled), count, total),
+      string.format(
+        "%s (%s) · %d of %d Claude sessions on",
+        on and "on" or "off",
+        source_text(g.enabled),
+        count,
+        total
+      ),
       on and theme.accent or theme.muted
     )
   end
-  local node = line({ span(marker, theme.accent), span("Every Claude session", theme.text, { bold = true }), span("  config.toml  ", theme.muted), summary }, w)
+  local node = line({
+    span(marker, theme.accent),
+    span("Every Claude session", theme.text, { bold = true }),
+    span("  config.toml  ", theme.muted),
+    summary,
+  }, w)
   if is_sel then
     node.style = { bg = theme.role("selection_bg") }
   end
@@ -563,7 +614,8 @@ local function settings_lines(target, status, gen, w, out)
   local function field(key, label)
     if edit and edit.target == target and edit.key == key then
       out[#out + 1] = textinput.node(edit.field, {
-        label = label .. (key == "message" and " — one line, 1-200 characters" or " — seconds, 0-86400"),
+        label = label
+          .. (key == "message" and " — one line, 1-200 characters" or " — seconds, 0-86400"),
         placeholder = edit.now and ("now: " .. edit.now) or "",
         focused = true,
       })
@@ -580,11 +632,14 @@ local function settings_lines(target, status, gen, w, out)
     out[#out + 1] = line({ span("   reading settings…", theme.muted) }, w)
     return
   elseif show.kind ~= "ok" then
-    out[#out + 1] = line({ span("   settings unavailable: " .. tostring(show.error or show.kind), theme.bad) }, w)
+    out[#out + 1] =
+      line({ span("   settings unavailable: " .. tostring(show.error or show.kind), theme.bad) }, w)
     return
   end
   local g = (status.data and status.data.global) or {}
-  local global_note = type(g.enabled) == "table" and ("global " .. (g.enabled.value and "on" or "off")) or ""
+  local global_note = type(g.enabled) == "table"
+      and ("global " .. (g.enabled.value and "on" or "off"))
+    or ""
   local entry = show.data.enabled
   out[#out + 1] = kv(
     "enabled",
@@ -596,7 +651,8 @@ local function settings_lines(target, status, gen, w, out)
   field("message", "message")
   field("delay_secs", "delay")
   if target == GLOBAL then
-    out[#out + 1] = line({ span("   Settings ▸ auto-continue.enabled mirrors this switch", theme.muted) }, w)
+    out[#out + 1] =
+      line({ span("   Settings ▸ auto-continue.enabled mirrors this switch", theme.muted) }, w)
   end
 end
 
@@ -613,7 +669,11 @@ local function mirror_line(status, w)
   end
   return line({
     span(
-      string.format(" Settings switch: %s · config.toml: %s — mirrored on the next interface event", s and "on" or "off", c and "on" or "off"),
+      string.format(
+        " Settings switch: %s · config.toml: %s — mirrored on the next interface event",
+        s and "on" or "off",
+        c and "on" or "off"
+      ),
       theme.role("status_blocked")
     ),
   }, w)
@@ -626,10 +686,22 @@ local function episode_lines(row, now, w, out)
     out[#out + 1] = kv("episode", "no limit recorded yet", theme.muted, nil, w)
     return
   end
-  out[#out + 1] = kv("window", tostring(ep.window or "?") .. " · resets " .. model.relative(ep.resets_at_ms, now), nil, nil, w)
-  local attempts = string.format("attempt %s of %s", tostring(ep.attempt or "?"), tostring(ep.max_attempts or "?"))
+  out[#out + 1] = kv(
+    "window",
+    tostring(ep.window or "?") .. " · resets " .. model.relative(ep.resets_at_ms, now),
+    nil,
+    nil,
+    w
+  )
+  local attempts =
+    string.format("attempt %s of %s", tostring(ep.attempt or "?"), tostring(ep.max_attempts or "?"))
   if ep.state == "armed" then
-    out[#out + 1] = kv("next send", model.relative(ep.next_send_at_ms, now), theme.role("status_blocked"), attempts, w)
+    local due = type(ep.next_send_at_ms) == "number"
+      and type(now) == "number"
+      and ep.next_send_at_ms <= now
+    local when = due and "due — on Thurbox's next heartbeat"
+      or model.relative(ep.next_send_at_ms, now)
+    out[#out + 1] = kv("next send", when, theme.role("status_blocked"), attempts, w)
   else
     out[#out + 1] = kv("attempts", attempts, nil, nil, w)
   end
@@ -640,7 +712,7 @@ local function episode_lines(row, now, w, out)
     out[#out + 1] = kv(
       "last",
       summary.text,
-      TONE[summary.tone]() ,
+      TONE[summary.tone](),
       superseded and "native resume or user activity came first" or nil,
       w
     )
@@ -662,7 +734,8 @@ local function feedback_lines(w, out)
     elseif answer.kind == "ok" then
       out[#out + 1] = line({ span(" ✓ saved " .. last.what, theme.role("status_done")) }, w)
     else
-      out[#out + 1] = line({ span(" ✗ " .. last.what .. ": " .. tostring(answer.error), theme.bad) }, w)
+      out[#out + 1] =
+        line({ span(" ✗ " .. last.what .. ": " .. tostring(answer.error), theme.bad) }, w)
     end
   end
   if state.set_error then
@@ -697,13 +770,21 @@ local function render(ctx)
 
   -- Ask on every render: an answer still fresh costs a table lookup.
   for _, src in ipairs(status_sources()) do
-    run(src.key .. ":" .. gen, model.status_cmd(), { session = src.session, ttl = STATUS_TTL, timeout = TIMEOUT })
+    run(
+      src.key .. ":" .. gen,
+      model.status_cmd(),
+      { session = src.session, ttl = STATUS_TTL, timeout = TIMEOUT }
+    )
   end
   local status = status_now()
   local target, index, list = selected()
   local anchor = anchor_for(target)
   if anchor and (target == GLOBAL or model.controllable(status.rows[target])) then
-    run("show:" .. target .. ":" .. gen, show_cmd(target), { session = anchor, ttl = SHOW_TTL, timeout = TIMEOUT })
+    run(
+      "show:" .. target .. ":" .. gen,
+      show_cmd(target),
+      { session = anchor, ttl = SHOW_TTL, timeout = TIMEOUT }
+    )
   end
 
   -- The detail first, so the list gets whatever height is left.
@@ -713,14 +794,18 @@ local function render(ctx)
     title = "this machine's global settings (config.toml)"
   else
     local s = session_by_id(target)
-    title = (s and s.name or target) .. ((s and not model.is_local(s)) and (" on " .. s.backend) or "")
+    title = (s and s.name or target)
+      .. ((s and not model.is_local(s)) and (" on " .. s.backend) or "")
   end
   detail[#detail + 1] = { type = "text", len = 1, text = { ui.rule(title, w) } }
   if target == GLOBAL then
     if anchor then
       settings_lines(target, status, gen, w, detail)
     else
-      detail[#detail + 1] = line({ span("   no local session: the global settings are each machine's own", theme.muted) }, w)
+      detail[#detail + 1] = line(
+        { span("   no local session: the global settings are each machine's own", theme.muted) },
+        w
+      )
     end
   else
     local row = status.rows[target]
@@ -772,7 +857,12 @@ return {
   capabilities = { "run" },
 
   keys = {
-    { key = "f11", action = "auto-continue.toggle", desc = "auto-continue: show or leave the pane", scope = "global" },
+    {
+      key = "f11",
+      action = "auto-continue.toggle",
+      desc = "auto-continue: show or leave the pane",
+      scope = "global",
+    },
     { key = "j", action = "auto-continue.next", desc = "next row" },
     { key = "down", action = "auto-continue.next", desc = "next row" },
     { key = "k", action = "auto-continue.previous", desc = "previous row" },
@@ -780,14 +870,21 @@ return {
     { key = "e", action = "auto-continue.enabled", desc = "on / off / back to the global switch" },
     { key = "m", action = "auto-continue.message", desc = "edit the continue message" },
     { key = "d", action = "auto-continue.delay", desc = "edit the delay after the reset" },
-    { key = "M", action = "auto-continue.reset_message", desc = "message back to the global value" },
+    {
+      key = "M",
+      action = "auto-continue.reset_message",
+      desc = "message back to the global value",
+    },
     { key = "D", action = "auto-continue.reset_delay", desc = "delay back to the global value" },
     { key = "r", action = "auto-continue.refresh", desc = "read the status again" },
   },
   pills = { { action = "auto-continue.toggle", label = "Auto-continue", priority = 5 } },
   commands = {
     { action = "auto-continue.toggle", desc = "auto-continue: show or leave the pane" },
-    { action = "auto-continue.toggle_selected", desc = "auto-continue: turn on/off for the selected session" },
+    {
+      action = "auto-continue.toggle_selected",
+      desc = "auto-continue: turn on/off for the selected session",
+    },
   },
   settings = {
     {
@@ -796,7 +893,14 @@ return {
       default = false,
     },
   },
-  events = { "focus.session", "focus.pane", "session.status", "interface.reloaded", "command.done", "command.failed" },
+  events = {
+    "focus.session",
+    "focus.pane",
+    "session.status",
+    "interface.reloaded",
+    "command.done",
+    "command.failed",
+  },
 
   render = render,
 
@@ -871,7 +975,12 @@ return {
   end,
 
   on_event = function(name, payload)
-    if name == "focus.session" and not state.edit and type(payload.to) == "string" and payload.to ~= "" then
+    if
+      name == "focus.session"
+      and not state.edit
+      and type(payload.to) == "string"
+      and payload.to ~= ""
+    then
       -- Follow the session list, so the pane opens on what you were looking at.
       if state.cursor ~= payload.to then
         state.cursor = payload.to
@@ -879,7 +988,12 @@ return {
     end
     if name == "command.failed" and payload.kind == "set" and payload.subject == SETTING then
       state.set_error = tostring(payload.error or "refused")
-    elseif name == "command.done" and payload.kind == "set" and payload.subject == SETTING and state.set_error then
+    elseif
+      name == "command.done"
+      and payload.kind == "set"
+      and payload.subject == SETTING
+      and state.set_error
+    then
       state.set_error = nil
     end
     reconcile()
