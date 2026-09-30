@@ -44,28 +44,30 @@ fn is_rule(line: &str) -> bool {
 pub fn classify(text: &str, message: &str) -> Screen {
     let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
 
-    // The composer is the last `❯` line sitting directly between two rules.
-    let composer = (1..lines.len().saturating_sub(1))
-        .rev()
-        .find(|&i| lines[i].trim_start().starts_with(PROMPT) && is_rule(lines[i - 1]) && is_rule(lines[i + 1]));
+    // The composer is the last pair of rules with a `❯` line right under the
+    // upper one. A long message wraps onto the lines below it.
+    let composer = (0..lines.len()).rev().filter(|&b| is_rule(lines[b])).find_map(|b| {
+        let a = (0..b).rev().find(|&i| is_rule(lines[i]))?;
+        (a + 1 < b && lines[a + 1].trim_start().starts_with(PROMPT)).then_some((a + 1, b))
+    });
 
     // The menu replaces the composer while it is open, so it counts only when
     // no composer is drawn below it; a closed one can linger in the scrollback.
     let last = |needle: &str| lines.iter().rposition(|l| l.contains(needle));
     if let (Some(menu), Some(_)) = (last("What do you want to do?"), last("Stop and wait for limit to reset"))
-        && composer.is_none_or(|c| c < menu)
+        && composer.is_none_or(|(c, _)| c < menu)
     {
         return Screen::LimitMenu;
     }
 
-    let Some(at) = composer else {
+    let Some((at, end)) = composer else {
         return Screen::Unknown;
     };
 
     // Below the composer: Claude's own countdown, when it is armed. The same
     // words stay in the scrollback above after a cancel, so only here counts.
     // Any one of its words counts, because a narrow pane wraps the line.
-    let footer = &lines[at + 2..];
+    let footer = &lines[end + 1..];
     if footer.iter().any(|l| {
         l.contains("esc to cancel") || l.contains("Continuing automatically") || l.contains("Continuing shortly")
     }) {
@@ -77,11 +79,13 @@ pub fn classify(text: &str, message: &str) -> Screen {
         return Screen::Unknown;
     }
 
-    let typed =
-        lines[at].trim_start().trim_start_matches(PROMPT).trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}');
+    // Compared without whitespace: where the pane wraps a line is the pane's
+    // business, not the message's.
+    let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let typed = squash(lines[at..end].join(" ").trim_start().trim_start_matches(PROMPT));
     if typed.is_empty() {
         Screen::EmptyPrompt
-    } else if typed == message.trim() {
+    } else if typed == squash(message) {
         Screen::OurText
     } else {
         Screen::OtherText
@@ -110,6 +114,18 @@ mod tests {
         for (name, want) in cases {
             assert_eq!(classify(&fixture(name), "continue"), want, "{name}");
         }
+    }
+
+    /// A long message wraps in the composer; it is still ours.
+    #[test]
+    fn a_wrapped_composer_is_read_whole() {
+        let rule = "─".repeat(30);
+        let msg = "please resume the task you were working on before the limit";
+        let screen = format!(
+            "{rule}\n❯ please resume the task you were\n  working on before the limit\n{rule}\n  ⏵⏵ auto mode\n"
+        );
+        assert_eq!(classify(&screen, msg), Screen::OurText);
+        assert_eq!(classify(&screen, "please resume"), Screen::OtherText);
     }
 
     /// A narrow pane wraps Claude's countdown line in two.

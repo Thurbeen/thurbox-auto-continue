@@ -160,11 +160,11 @@ fn off_by_default_on_per_session_and_off_again_means_no_send() {
     // And the status a plugin reads says so.
     let out = sb.tac(&["status", "--json"]);
     let status: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(status["schema"], 1);
+    assert_eq!(status["schema"], 2);
     let row = status["sessions"].as_array().unwrap().iter().find(|s| s["id"] == on.as_str()).unwrap().clone();
-    assert_eq!(row["toggle"], "off");
+    assert_eq!(row["overrides"]["enabled"], "off");
     assert_eq!(row["enabled"], false);
-    assert_eq!(row["episode"]["label"], "skipped:disabled");
+    assert_eq!(row["last_outcome"]["label"], "skipped:disabled");
 }
 
 /// A12: a non-Claude session is never acted on, and `enable` refuses it.

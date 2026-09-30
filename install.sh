@@ -53,9 +53,14 @@ cp "$binary" "$home_dir/bin/$name.tmp" && mv "$home_dir/bin/$name.tmp" "$home_di
 ln -sf "$home_dir/bin/$name" "$path_dir/$name"
 
 # `extension install` activates, but Thurbox records its active set
-# read-modify-write, so a heartbeat tick at the same moment can drop it.
-thurbox-cli extension activate auto-continue >/dev/null
-thurbox-cli --json extension list | grep -q '"name":"auto-continue"' || die "the extension did not register"
+# read-modify-write, so a heartbeat tick at the same moment can drop it:
+# activate, then check that it stuck.
+active() { thurbox-cli --json extension status auto-continue | grep -q '"active":true'; }
+tries=0
+until thurbox-cli extension activate auto-continue >/dev/null && sleep 1 && active; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 5 ] || die "the extension would not stay active; run: thurbox-cli extension activate auto-continue"
+done
 
 case ":$PATH:" in
 *":$path_dir:"*) ;;
