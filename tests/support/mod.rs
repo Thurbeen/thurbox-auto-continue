@@ -5,6 +5,11 @@
 //! The `thurbox-cli` comes from `$TAC_THURBOX_CLI`, else from `PATH`. Every
 //! command runs with a cleared environment, so nothing reaches the operator's
 //! own Thurbox, tmux server or Claude config.
+//!
+//! On native Windows the multiplexer is psmux (on `PATH`, or named by
+//! `$TAC_PSMUX`), Claude's hooks run under Git Bash as Claude runs them there
+//! (`$CLAUDE_CODE_GIT_BASH_PATH`, else the one beside `git`), and the sandbox
+//! copies binaries where POSIX links them.
 
 #![allow(dead_code)]
 
@@ -38,6 +43,11 @@ pub struct Sandbox {
     extra_env: Vec<(String, String)>,
 }
 
+/// `name` as an executable file name on this platform.
+pub fn exe(name: &str) -> String {
+    format!("{name}{}", std::env::consts::EXE_SUFFIX)
+}
+
 /// `name` on the test runner's own PATH.
 fn on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -48,14 +58,51 @@ pub fn thurbox_cli() -> PathBuf {
     if let Some(p) = std::env::var_os("TAC_THURBOX_CLI") {
         return PathBuf::from(p);
     }
-    on_path("thurbox-cli").expect("no thurbox-cli: put one on PATH or set TAC_THURBOX_CLI")
+    on_path(&exe("thurbox-cli")).expect("no thurbox-cli: put one on PATH or set TAC_THURBOX_CLI")
+}
+
+/// The multiplexer Thurbox drives on this platform: tmux, or psmux on Windows.
+pub fn mux() -> PathBuf {
+    if cfg!(windows) {
+        if let Some(p) = std::env::var_os("TAC_PSMUX") {
+            return PathBuf::from(p);
+        }
+        return on_path("psmux.exe").expect("tests need psmux on PATH (or TAC_PSMUX)");
+    }
+    on_path("tmux").expect("tests need tmux on PATH")
+}
+
+/// The shell Claude runs a hook command under: `sh` on POSIX; on Windows the
+/// Git Bash Claude Code requires, found the way Claude finds it.
+pub fn hook_shell() -> PathBuf {
+    if !cfg!(windows) {
+        return PathBuf::from("sh");
+    }
+    if let Some(p) = std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH") {
+        return PathBuf::from(p);
+    }
+    // <git>\cmd\git.exe -> <git>\bin\bash.exe
+    let git = on_path("git.exe").expect("tests need git on PATH");
+    let bash = git.parent().and_then(Path::parent).map(|g| g.join("bin").join("bash.exe"));
+    bash.filter(|b| b.is_file()).expect("no Git Bash: set CLAUDE_CODE_GIT_BASH_PATH")
+}
+
+/// Put `src` at `dst`: a symlink on POSIX, a hard link (or a copy) on Windows,
+/// where a symlink needs a privilege a test runner may not have.
+pub fn link(src: &Path, dst: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(src, dst).unwrap();
+    #[cfg(windows)]
+    if std::fs::hard_link(src, dst).is_err() {
+        std::fs::copy(src, dst).unwrap();
+    }
 }
 
 fn fake_claude() -> PathBuf {
     // target/<profile>/deps/<test> -> target/<profile>/examples/fake_claude
-    let exe = std::env::current_exe().unwrap();
-    let profile = exe.parent().unwrap().parent().unwrap();
-    let fake = profile.join("examples").join("fake_claude");
+    let exe_path = std::env::current_exe().unwrap();
+    let profile = exe_path.parent().unwrap().parent().unwrap();
+    let fake = profile.join("examples").join(exe("fake_claude"));
     assert!(fake.is_file(), "{} missing: run through `cargo test`, which builds examples", fake.display());
     fake
 }
@@ -71,8 +118,14 @@ impl Sandbox {
 
     /// A sandbox with Thurbox's hooks active but without the extension.
     pub fn bare() -> Self {
+        Self::with_prefix("tac-")
+    }
+
+    /// [`Sandbox::bare`], its root named from `prefix` — every path in it
+    /// (the home, our binary, the extension home) starts with that name.
+    pub fn with_prefix(prefix: &str) -> Self {
         let base = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
-        let tmp = tempfile::Builder::new().prefix("tac-").tempdir_in(&base).unwrap();
+        let tmp = tempfile::Builder::new().prefix(prefix).tempdir_in(&base).unwrap();
         let root = tmp.path().to_path_buf();
         let home = root.join("home");
         let repo = root.join("repo");
@@ -81,11 +134,13 @@ impl Sandbox {
         for d in [&home, &repo, &bin, &ctl, &home.join(".claude")] {
             std::fs::create_dir_all(d).unwrap();
         }
-        std::os::unix::fs::symlink(thurbox_cli(), bin.join("thurbox-cli")).unwrap();
-        std::os::unix::fs::symlink(BIN, bin.join("thurbox-auto-continue")).unwrap();
+        link(&thurbox_cli(), &bin.join(exe("thurbox-cli")));
+        link(Path::new(BIN), &bin.join(exe("thurbox-auto-continue")));
         // tmux may live outside the sandbox PATH (Homebrew's /opt/homebrew/bin).
-        let tmux = on_path("tmux").expect("tests need tmux on PATH");
-        std::os::unix::fs::symlink(tmux, bin.join("tmux")).unwrap();
+        // psmux stays where it is: it is found through PATH, see `command`.
+        if cfg!(unix) {
+            link(&mux(), &bin.join("tmux"));
+        }
         std::fs::write(home.join(".claude/settings.json"), USER_SETTINGS).unwrap();
         let sb = Self {
             ext_home: home.join(".config/thurbox/auto-continue"),
@@ -110,7 +165,8 @@ impl Sandbox {
         sb.cli(&["extension", "activate", "ui-skill"]);
         let agents = sb.root.join("cfg/agents.toml");
         let text = std::fs::read_to_string(&agents).unwrap();
-        let fake = format!("command = \"{}\"", fake_claude().display());
+        // A TOML literal string: a Windows path is all backslashes.
+        let fake = format!("command = '{}'", fake_claude().display());
         std::fs::write(&agents, text.replacen("command = \"claude\"", &fake, 1)).unwrap();
         sb
     }
@@ -128,8 +184,8 @@ impl Sandbox {
         });
         let bin = self.ext_home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        let _ = std::fs::remove_file(bin.join("thurbox-auto-continue"));
-        std::os::unix::fs::symlink(BIN, bin.join("thurbox-auto-continue")).unwrap();
+        let _ = std::fs::remove_file(bin.join(exe("thurbox-auto-continue")));
+        link(Path::new(BIN), &bin.join(exe("thurbox-auto-continue")));
         // Tests that need a clock run with no delay and a short confirmation.
         self.config(&[("delay_secs", "0"), ("confirm_secs", "5")]);
     }
@@ -152,10 +208,54 @@ impl Sandbox {
         assert!(ok, "git {args:?}");
     }
 
+    /// The PATH every sandboxed command gets: the sandbox's own bin first.
+    pub fn path(&self) -> std::ffi::OsString {
+        if cfg!(windows) {
+            // psmux, git and PowerShell where the machine keeps them.
+            let mut dirs = vec![self.bin.clone(), mux().parent().unwrap().to_path_buf()];
+            dirs.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+            std::env::join_paths(dirs).unwrap()
+        } else {
+            format!("{}:/usr/local/bin:/usr/bin:/bin", self.bin.display()).into()
+        }
+    }
+
     pub fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
         let mut c = Command::new(program);
-        c.env_clear()
-            .env("PATH", format!("{}:/usr/local/bin:/usr/bin:/bin", self.bin.display()))
+        c.env_clear();
+        if cfg!(windows) {
+            // What Windows itself needs to start a process, and nothing of the
+            // runner's own profile: the home, temp and app-data dirs are ours.
+            for k in [
+                "SystemRoot",
+                "SystemDrive",
+                "windir",
+                "ComSpec",
+                "PATHEXT",
+                "OS",
+                "PROCESSOR_ARCHITECTURE",
+                "NUMBER_OF_PROCESSORS",
+                "ProgramData",
+                "ProgramFiles",
+                "ProgramFiles(x86)",
+                "ProgramW6432",
+                "CommonProgramFiles",
+                "PSModulePath",
+            ] {
+                if let Some(v) = std::env::var_os(k) {
+                    c.env(k, v);
+                }
+            }
+            let tmp = self.root.join("tmp");
+            let _ = std::fs::create_dir_all(&tmp);
+            c.env("USERPROFILE", &self.home)
+                .env("APPDATA", self.home.join("AppData").join("Roaming"))
+                .env("LOCALAPPDATA", self.home.join("AppData").join("Local"))
+                .env("TEMP", &tmp)
+                .env("TMP", &tmp)
+                .env("CLAUDE_CODE_GIT_BASH_PATH", hook_shell());
+        }
+        c.env("PATH", self.path())
             .env("HOME", &self.home)
             .env("THURBOX_CONFIG_DIR", self.root.join("cfg"))
             .env("THURBOX_DATA_DIR", self.root.join("data"))
@@ -175,7 +275,7 @@ impl Sandbox {
 
     /// `thurbox-cli --json <args>`, which must succeed.
     pub fn cli(&self, args: &[&str]) -> Value {
-        let out = self.command(self.bin.join("thurbox-cli")).arg("--json").args(args).output().unwrap();
+        let out = self.command(self.bin.join(exe("thurbox-cli"))).arg("--json").args(args).output().unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(out.status.success(), "thurbox-cli {args:?} failed: {text}");
         serde_json::from_str(text.trim()).unwrap_or(Value::Null)
@@ -325,12 +425,13 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         let socket = self.socket.borrow().clone().or_else(|| {
-            let out = self.command(self.bin.join("thurbox-cli")).args(["--json", "runtime", "status"]).output().ok()?;
+            let out =
+                self.command(self.bin.join(exe("thurbox-cli"))).args(["--json", "runtime", "status"]).output().ok()?;
             let v: Value = serde_json::from_slice(&out.stdout).ok()?;
             v["tmux_socket"].as_str().map(String::from)
         });
         if let Some(s) = socket {
-            let _ = Command::new("tmux").args(["-L", &s, "kill-server"]).stderr(Stdio::null()).status();
+            let _ = self.command(mux()).args(["-L", &s, "kill-server"]).stderr(Stdio::null()).status();
         }
     }
 }
