@@ -357,23 +357,55 @@ fn raw_mode() {
     let _ = Command::new("stty").args(["-icanon", "-echo", "min", "1"]).stdin(Stdio::inherit()).status();
 }
 
-/// The same on a Windows console (a psmux pane is a ConPTY): no line editing,
-/// no echo, Ctrl-keys as bytes, and keys arriving as VT sequences — what
-/// Claude Code's own input layer asks for.
+/// Every byte typed at the agent, on its own thread.
+#[cfg(unix)]
+fn read_keys(tx: mpsc::Sender<u8>) {
+    let mut stdin = std::io::stdin();
+    let mut b = [0u8; 1];
+    while stdin.read(&mut b).map(|n| n == 1).unwrap_or(false) {
+        if tx.send(b[0]).is_err() {
+            break;
+        }
+    }
+}
+
 #[cfg(windows)]
-fn raw_mode() {
-    type Handle = *mut std::ffi::c_void;
+mod console {
+    pub type Handle = *mut std::ffi::c_void;
+    /// `INPUT_RECORD` holding a `KEY_EVENT_RECORD`, the only event read here.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct KeyRecord {
+        pub event_type: u16,
+        _pad: u16,
+        pub key_down: i32,
+        pub repeat: u16,
+        pub virtual_key: u16,
+        pub scan_code: u16,
+        pub unicode_char: u16,
+        pub control_state: u32,
+    }
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        fn GetStdHandle(which: u32) -> Handle;
-        fn GetConsoleMode(h: Handle, mode: *mut u32) -> i32;
-        fn SetConsoleMode(h: Handle, mode: u32) -> i32;
+        pub fn GetStdHandle(which: u32) -> Handle;
+        pub fn GetConsoleMode(h: Handle, mode: *mut u32) -> i32;
+        pub fn SetConsoleMode(h: Handle, mode: u32) -> i32;
+        pub fn ReadConsoleInputW(h: Handle, records: *mut KeyRecord, len: u32, read: *mut u32) -> i32;
     }
-    const STD_INPUT: u32 = -10i32 as u32;
-    const STD_OUTPUT: u32 = -11i32 as u32;
+    pub const STD_INPUT: u32 = -10i32 as u32;
+    pub const STD_OUTPUT: u32 = -11i32 as u32;
+}
+
+/// The same on a Windows console (a psmux pane is a ConPTY), the way Node's
+/// libuv reads a raw TTY there: no line editing, no echo, Ctrl-keys as
+/// characters, and every key read as a console key event.
+#[cfg(windows)]
+fn raw_mode() {
+    use console::*;
     const PROCESSED_INPUT: u32 = 0x1;
     const LINE_INPUT: u32 = 0x2;
     const ECHO_INPUT: u32 = 0x4;
+    const WINDOW_INPUT: u32 = 0x8;
     const VT_INPUT: u32 = 0x200;
     const VT_PROCESSING: u32 = 0x4;
     // SAFETY: plain Win32 calls on this process's own standard handles.
@@ -381,12 +413,51 @@ fn raw_mode() {
         let input = GetStdHandle(STD_INPUT);
         let mut mode = 0;
         if GetConsoleMode(input, &mut mode) != 0 {
-            SetConsoleMode(input, (mode & !(PROCESSED_INPUT | LINE_INPUT | ECHO_INPUT)) | VT_INPUT);
+            SetConsoleMode(input, (mode & !(PROCESSED_INPUT | LINE_INPUT | ECHO_INPUT | VT_INPUT)) | WINDOW_INPUT);
         }
         let output = GetStdHandle(STD_OUTPUT);
         let mut mode = 0;
         if GetConsoleMode(output, &mut mode) != 0 {
             SetConsoleMode(output, mode | VT_PROCESSING);
+        }
+    }
+}
+
+/// Each key-down's character, as UTF-8 — Esc as 0x1b, Enter as `\r`,
+/// Ctrl-U as 0x15 — which is what libuv hands a Node program.
+#[cfg(windows)]
+fn read_keys(tx: mpsc::Sender<u8>) {
+    use console::*;
+    const KEY_EVENT: u16 = 1;
+    // SAFETY: reads into a local buffer sized by `len`.
+    let input = unsafe { GetStdHandle(STD_INPUT) };
+    let mut records = [KeyRecord::default(); 64];
+    let mut high: Option<u16> = None;
+    loop {
+        let mut n = 0u32;
+        if unsafe { ReadConsoleInputW(input, records.as_mut_ptr(), records.len() as u32, &mut n) } == 0 {
+            return;
+        }
+        for r in &records[..n as usize] {
+            if r.event_type != KEY_EVENT || r.key_down == 0 || r.unicode_char == 0 {
+                continue;
+            }
+            let units: Vec<u16> = match (high.take(), r.unicode_char) {
+                (None, u @ 0xD800..=0xDBFF) => {
+                    high = Some(u);
+                    continue;
+                }
+                (Some(h), u) => vec![h, u],
+                (None, u) => vec![u],
+            };
+            let text = String::from_utf16_lossy(&units);
+            for _ in 0..r.repeat.max(1) {
+                for b in text.bytes() {
+                    if tx.send(b).is_err() {
+                        return;
+                    }
+                }
+            }
         }
     }
 }
@@ -441,15 +512,7 @@ fn main() {
     fake.draw();
 
     let (tx, rx) = mpsc::channel::<u8>();
-    std::thread::spawn(move || {
-        let mut stdin = std::io::stdin();
-        let mut b = [0u8; 1];
-        while stdin.read(&mut b).map(|n| n == 1).unwrap_or(false) {
-            if tx.send(b[0]).is_err() {
-                break;
-            }
-        }
-    });
+    std::thread::spawn(move || read_keys(tx));
     let mut pending: Vec<u8> = Vec::new();
     loop {
         if fake.resume_at.is_some_and(|t| SystemTime::now() >= t) && fake.view == View::Armed {

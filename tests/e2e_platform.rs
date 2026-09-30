@@ -42,10 +42,30 @@ fn a_home_with_a_space_still_gets_its_send() {
     let id = sb.session("worker", "claude");
     sb.script(&id, &["limit:five_hour:1:cancelled", "ok"]);
     sb.hit_limit(&id);
-    let command = sb.our_automations()[0]["action"]["command"].as_str().unwrap_or_default().to_string();
-    assert!(command.contains(" with space-"), "{command}");
-    sb.tick_until_fired(&id);
-    assert_eq!(sb.state(&id).as_deref(), Some("sent"), "{command}: {:?}", sb.episode(&id));
+    match sb.our_automations().first() {
+        Some(a) => {
+            let command = a["action"]["command"].as_str().unwrap_or_default().to_string();
+            if cfg!(unix) {
+                assert!(command.contains(" with space-"), "{command}");
+            }
+            sb.tick_until_fired(&id);
+        }
+        // Windows, where `cmd /C` cannot be handed the path and the volume
+        // keeps no short name for it: the episode stays armed for the sweep,
+        // which sends it once overdue.
+        None => {
+            if cfg!(unix) {
+                panic!("POSIX always schedules");
+            }
+            let log = std::fs::read_to_string(sb.ext_home.join("auto-continue.log")).unwrap_or_default();
+            assert!(log.contains("left to the sweep"), "{log}");
+            let mut ep = sb.episode(&id).unwrap();
+            ep["fire_at_ms"] = serde_json::json!(0);
+            sb.cli(&["session", "meta", "set", &id, "auto-continue.episode", "--", &ep.to_string()]);
+            assert!(sb.tac(&["sweep"]).status.success());
+        }
+    }
+    assert_eq!(sb.state(&id).as_deref(), Some("sent"), "{:?}", sb.episode(&id));
     assert_eq!(sb.received(&id), ["hello", "continue"]);
 }
 
@@ -73,25 +93,36 @@ fn the_manifest_sweep_runs_under_the_platform_shell() {
 
 /// Every Exec automation runs its command as `sh -c <command>`, or on Windows
 /// `cmd /C <command>`. The one-shot names our binary and the extension home by
-/// path, quoted by `platform::shell_quote`; a path with a space in it — a
-/// Windows profile like `C:\Users\First Last` — has to come through whole.
+/// path, spelled by `platform::shell_arg`. A path with a space in it — a
+/// Windows profile like `C:\Users\First Last` — either comes through whole or
+/// is refused up front (the sweep then sends it), never mangled into a
+/// command that fails.
 #[test]
-fn an_exec_command_quoted_for_the_platform_shell_runs() {
+fn an_exec_command_spelled_for_the_platform_shell_runs() {
     let sb = Sandbox::new();
     let spaced = sb.root.join("a dir with spaces");
     std::fs::create_dir_all(&spaced).unwrap();
     let spaced_bin = spaced.join(support::exe("thurbox-auto-continue"));
     support::link(std::path::Path::new(support::BIN), &spaced_bin);
-    let q = |p: &std::path::Path| platform::shell_quote(&p.display().to_string());
+    let bin = std::path::Path::new(support::BIN);
     let cases = [
-        ("plain", format!("{} config show --home {}", q(std::path::Path::new(support::BIN)), q(&sb.ext_home))),
-        ("spaced binary", format!("{} config show --home {}", q(&spaced_bin), q(&sb.ext_home))),
-        ("spaced home", format!("{} config show --home {}", q(std::path::Path::new(support::BIN)), q(&spaced))),
-        ("both spaced", format!("{} config show --home {}", q(&spaced_bin), q(&spaced))),
+        ("plain", bin, sb.ext_home.as_path()),
+        ("spaced binary", spaced_bin.as_path(), sb.ext_home.as_path()),
+        ("spaced home", bin, spaced.as_path()),
+        ("both spaced", spaced_bin.as_path(), spaced.as_path()),
     ];
     let mut outcomes = Vec::new();
-    for (what, command) in &cases {
-        let v = sb.cli(&["automation", "create", "--name", what, "--trigger", "cron:0 0 1 1 *", "--command", command]);
+    for (what, exe, home) in cases {
+        let arg = |p: &std::path::Path| platform::shell_arg(&p.display().to_string());
+        let (Some(exe), Some(home)) = (arg(exe), arg(home)) else {
+            if cfg!(unix) {
+                panic!("{what}: POSIX quotes any path");
+            }
+            outcomes.push(format!("{what}: refused"));
+            continue;
+        };
+        let command = format!("{exe} config show --home {home}");
+        let v = sb.cli(&["automation", "create", "--name", what, "--trigger", "cron:0 0 1 1 *", "--command", &command]);
         let id = v["id"].as_i64().unwrap().to_string();
         sb.cli(&["automation", "run", &id]);
         sb.wait("the automation to run", Duration::from_secs(30), || {
@@ -101,8 +132,10 @@ fn an_exec_command_quoted_for_the_platform_shell_runs() {
         let run = runs(&sb, &id).remove(0);
         outcomes.push(format!("{what}: {} {} <- {command}", run["status"], run["detail"]));
     }
-    let failed: Vec<_> = outcomes.iter().filter(|o| !o.contains("\"success\"")).collect();
+    eprintln!("{outcomes:#?}");
+    let failed: Vec<_> = outcomes.iter().filter(|o| !o.contains("\"success\"") && !o.ends_with("refused")).collect();
     assert!(failed.is_empty(), "{outcomes:#?}");
+    assert!(outcomes[0].contains("\"success\""), "a plain path always runs: {outcomes:#?}");
 }
 
 fn runs(sb: &Sandbox, id: &str) -> Vec<Value> {

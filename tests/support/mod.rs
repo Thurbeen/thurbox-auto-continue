@@ -10,6 +10,13 @@
 //! `$TAC_PSMUX`), Claude's hooks run under Git Bash as Claude runs them there
 //! (`$CLAUDE_CODE_GIT_BASH_PATH`, else the one beside `git`), and the sandbox
 //! copies binaries where POSIX links them.
+//!
+//! A psmux pane does not inherit PATH: psmux rebuilds it from the registry
+//! (the machine's and the user's `Environment` keys), so an agent's hooks see
+//! the user's persistent PATH and not the sandbox's. `$TAC_PANE_PATH` names a
+//! directory the runner put on that persistent PATH; each sandbox puts
+//! `thurbox-cli` and our binary there, which is where an install on Windows has
+//! to put them too.
 
 #![allow(dead_code)]
 
@@ -152,6 +159,17 @@ impl Sandbox {
         // psmux stays where it is: it is found through PATH, see `command`.
         if cfg!(unix) {
             link(&mux(), &bin.join("tmux"));
+        }
+        if let Some(dir) = std::env::var_os("TAC_PANE_PATH").filter(|_| cfg!(windows)) {
+            let dir = PathBuf::from(dir);
+            let _ = std::fs::create_dir_all(&dir);
+            // The same two files for every sandbox; the first one to get here links them.
+            for (src, name) in [(thurbox_cli(), "thurbox-cli"), (PathBuf::from(BIN), "thurbox-auto-continue")] {
+                let dst = dir.join(exe(name));
+                if !dst.exists() {
+                    let _ = std::fs::hard_link(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).map(drop));
+                }
+            }
         }
         std::fs::write(home.join(".claude/settings.json"), USER_SETTINGS).unwrap();
         let sb = Self {

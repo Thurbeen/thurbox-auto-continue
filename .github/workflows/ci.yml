@@ -117,6 +117,18 @@ jobs:
           unzip -q "$dir"/*-"$target".zip -d "$dir"
           "$dir/thurbox-cli.exe" --version
           echo "TAC_THURBOX_CLI=$(cygpath -w "$dir/thurbox-cli.exe")" >> "$GITHUB_ENV"
+      # psmux builds a pane's PATH from the registry, not from the process that
+      # started it, so this is how Claude's hooks in a pane find thurbox-cli and
+      # our binary (the sandbox links both here). A throwaway runner's own
+      # user PATH, so nothing outlives the job.
+      - name: Put a directory on the user's persistent PATH
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'tac-pane-path'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+          [Environment]::SetEnvironmentVariable('Path', "$user;$dir", 'User')
+          "TAC_PANE_PATH=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - run: cargo test --locked --no-fail-fast
 
   # The one check the main-branch ruleset requires, so adding a job here never
