@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Sonnet 5.5 · Claude API
+ ▝▝   ▝▝   /home/user/project
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and
+▎ prompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+
+❯ hello
+  ⎿  You've hit your session limit · resets 11:55am (Etc/UTC)
+
+● Usage limit reached · continuing automatically at 11:55am · esc to cancel
+
+✻ Cooked for 0s · done 11:55 AM
+
+● Usage limit reset · continuing automatically
+  ⎿  You've hit your session limit · resets 11:58am (Etc/UTC)
+
+✻ Sautéed for 0s · done 11:57 AM
+
+● Usage limit reset · continuing automatically
+  ⎿  You've hit your session limit · resets 12pm (Etc/UTC)
+
+✻ Baked for 0s · done 11:59 AM
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 12pm
+    Continuing automatically at 12pm · esc to cancel
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

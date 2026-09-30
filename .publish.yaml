@@ -1,0 +1,27 @@
+# The gate the `publish` skill runs for this repository.
+#
+# The test step drives a real, sandboxed thurbox-cli and tmux server: it needs
+# tmux, and a thurbox-cli on PATH or named by TAC_THURBOX_CLI (see README.md).
+
+version: 1
+
+forge: github
+base: main
+
+review:
+  rules:
+    - README.md
+
+gate:
+  - name: lint
+    run:
+      - cargo fmt --all --check
+      - cargo clippy --all-targets --locked -- -D warnings
+      - shellcheck install.sh
+    fix: cargo fmt --all
+  - name: test
+    run: cargo test --locked
+
+ci:
+  required: true
+  timeout: 30m

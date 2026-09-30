@@ -1,0 +1,19 @@
+# thurbox-auto-continue settings. Auto-continue is off unless `enabled` is true
+# here or a session is turned on with `thurbox-auto-continue enable <session>`.
+# Change a value with `thurbox-auto-continue config set <key> <value>`, or edit
+# this file; it is read again on every run.
+
+# The global default. A session's own toggle wins in both directions.
+enabled = false
+# Seconds after the quota window resets before the message is typed.
+delay_secs = 300
+# What is typed into the session.
+message = "continue"
+# Quota windows acted on. Add "seven_day" to act on the weekly window too.
+windows = ["five_hour"]
+# Sends allowed for one run of re-rejections before giving up.
+max_attempts = 2
+# Claude's usage-limit menu open at send time: "escape" closes it once, "skip" leaves it.
+on_menu = "escape"
+# Seconds to wait for the session to report `working` after Enter.
+confirm_secs = 20

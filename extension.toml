@@ -1,0 +1,43 @@
+# The auto-continue extension for Thurbox.
+#
+# When a Claude session hits its usage limit, Claude's `StopFailure` hook runs
+# `thurbox-auto-continue record`, which schedules one Exec automation for when
+# the window has reset. Thurbox's own heartbeat fires it, TUI open or closed,
+# and `thurbox-auto-continue fire` types the message only if every gate passes.
+# Off by default: see README.md.
+#
+# Install with `./install.sh`, not `thurbox-cli extension install` alone: the
+# installer also puts the binary where the commands below expect it.
+
+name = "auto-continue"
+description = "Type `continue` into a Claude session once its usage limit has reset — headless, no model involved."
+config_version = 1
+version = "0.1.0"
+min_thurbox_version = "2.36.2"
+home = "~/.config/thurbox/auto-continue"
+
+# The user's settings, seeded once and never overwritten.
+[[files]]
+path = "config.toml"
+source = "extension/config.toml"
+if_absent = true
+
+# The hook goes into Claude's own user settings, beside Thurbox's hooks — which
+# reach Claude through their own `--settings` file, and which Claude keeps
+# running alongside these (verified against Claude Code 2.1.285). A second
+# `--settings` flag is avoided on purpose: the option takes one value.
+#
+# The command names the binary on PATH because Thurbox does not substitute
+# `{home}` inside a merge, carries Thurbox's ownership stamp so install and
+# uninstall remove exactly this entry, and never contains the words
+# `thurbox-cli session signal` (uninstall prunes every entry that does).
+[[config_merges]]
+path = "~/.claude/settings.json"
+source = "extension/claude-settings.json"
+requires_dir = "~/.claude"
+
+# The fallback for an episode the hook missed, and for an overdue send.
+[[automations]]
+name = "auto-continue-sweep"
+trigger = "cron:*/15 * * * *"
+command = "'{home}/bin/thurbox-auto-continue' sweep --home '{home}'"
