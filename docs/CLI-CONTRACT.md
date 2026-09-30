@@ -1,7 +1,8 @@
 # CLI contract for interfaces
 
 What an interface (the Thurbox plugin, a script) may rely on. Everything here
-is deterministic and runs no model. Run it on any machine that lists the
+is deterministic and runs no model. For how to install, turn on and monitor it
+as a user, see [USAGE.md](USAGE.md). Run it on any machine that lists the
 session: a session on a shared host is read and changed by that host's own
 install, which these commands reach for you (see
 [Sessions on shared hosts](#sessions-on-shared-hosts)).
@@ -68,7 +69,7 @@ in every case, including a command line clap rejects:
 ```json
 {"ok": true, "scope": "session", "session": "<id>", "key": "message", "value": "keep going"}
 {"ok": true, "scope": "session", "session": "<id>", "key": "message", "value": null}
-{"ok": false, "error": "`message` must not start with / or !: it would run a Claude command"}
+{"ok": false, "error": "`message` must not start with /, ! or #: Claude reads those as a command, a shell or a memory"}
 ```
 
 `value` is the value now stored at that scope; `null` after an `unset`. For a

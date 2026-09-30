@@ -4,14 +4,14 @@
 # `thurbox-auto-continue record`, which schedules one Exec automation for when
 # the window has reset. Thurbox's own heartbeat fires it, TUI open or closed,
 # and `thurbox-auto-continue fire` types the message only if every gate passes.
-# Off by default: see README.md.
+# Off by default: see docs/USAGE.md.
 #
 # Install with `./install.sh`, not `thurbox-cli extension install` alone: the
 # installer also puts the binary where the commands below expect it.
 #
 # The Thurbox TUI plugin (ui/) is not part of this manifest: an extension
 # cannot deliver interface panes, so it is installed with
-# `thurbox-cli plugin install` (README.md, "In the Thurbox TUI"). It changes
+# `thurbox-cli plugin install` (README.md, "Install"). It changes
 # nothing declared here — it reads and writes through the CLI, like a script.
 
 name = "auto-continue"
