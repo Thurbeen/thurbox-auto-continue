@@ -12,6 +12,7 @@ pub mod episode;
 pub mod lock;
 pub mod log;
 pub mod platform;
+pub mod remote;
 pub mod screen;
 pub mod thurbox;
 pub mod transcript;

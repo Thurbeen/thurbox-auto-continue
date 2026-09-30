@@ -37,6 +37,25 @@ Every 15 minutes: thurbox-auto-continue sweep
   └─ an episode the hook missed, a send whose one-shot never fired, a stale claim
 ```
 
+On a shared SSH or WSL host all of that runs **on the host**, by the host's own
+install, against the host's own Thurbox database:
+
+```text
+laptop                                        shared host (share_sessions = true)
+──────                                        ───────────────────────────────────
+session list: worker  ssh:devbox   ◀─mirror─  session list: worker  local-tmux
+record / fire / sweep: skip ssh:* and wsl:*   Claude's hook → record → one-shot
+                                              host heartbeat → fire → types once
+thurbox-auto-continue enable worker
+  └─ thurbox-cli session exec worker -- ─────▶ thurbox-auto-continue config set
+       thurbox-auto-continue … --delegated       enabled on --session worker
+                                                 (stored in the host's database)
+thurbox-auto-continue status worker ─────────▶ status --json, relayed field by field
+```
+
+One machine owns each session, so two laptops watching one host never send
+twice, and the host keeps going while the laptop is off.
+
 What it will not do:
 
 - **Send twice.** A per-session OS file lock serialises every run on a machine,
@@ -58,7 +77,8 @@ What it will not do:
 
 ## Install
 
-On every machine that runs Claude sessions, including each shared host:
+On every machine that runs Claude sessions, including each shared SSH host and
+WSL distro (see [Shared hosts](#shared-hosts)):
 
 ```sh
 git clone https://github.com/Thurbeen/thurbox-auto-continue
@@ -117,11 +137,34 @@ send; a changed delay applies from the next limit.
 | `on_menu` | `"escape"` | no | the limit menu open: close it once, or `"skip"` |
 | `confirm_secs` | `20` | no | how long to wait for `working` after Enter before `unconfirmed` (at most 20) |
 
+## Shared hosts
+
+A session on an SSH host or WSL distro is looked after by the extension
+installed **on that host**: install it there as above, and turn it on there or
+from any machine that lists the session. From the laptop, `enable`, `disable`,
+`clear`, `config set|unset|show --session` and `status` reach the host's own
+install through `thurbox-cli session exec` and change the host's database,
+where the host's install reads it. The laptop itself never records, schedules
+or sends for such a session.
+
+It needs the host to share its sessions (`share_sessions = true` in
+`hosts.toml`, Thurbox's default). Everything else is unsupported, and `status`
+and the setters say which case it is rather than guess:
+
+- `share_sessions = false`: the laptop drives the host, no host database owns
+  the session, and nothing is sent to it;
+- no extension on the host, or one too old to answer the laptop;
+- a session the host does not know (made before it shared), or one it reaches
+  through a further host;
+- a native-Windows (psmux) host.
+
+`status` asks each host once per run, so it is as slow as the host's ssh.
+
 For scripts and the Thurbox plugin, [docs/CLI-CONTRACT.md](docs/CLI-CONTRACT.md)
 is the contract: `status --json` (`"schema": 2`) with each session's effective
 settings and where each comes from, its episode, next send and last outcome,
-and the setters with their validation and exit codes. It carries no transcript
-text.
+and the setters with their validation and exit codes, and how a session on a
+shared host is reached. It carries no transcript text.
 
 ## Stop it, remove it
 
@@ -133,7 +176,10 @@ text.
 - **Uninstall:** `./install.sh --uninstall`. It runs `thurbox-auto-continue
   forget --all` (every per-session setting, episode and pending send), then
   `thurbox-cli extension uninstall auto-continue --purge`, which takes our hook
-  out of `~/.claude/settings.json` and leaves your own entries there.
+  out of `~/.claude/settings.json` and leaves your own entries there. A send
+  still queued (a plain `extension uninstall`, without `forget --all`) fires
+  and skips as `extension-inactive`. Each machine forgets only its own: run it
+  on each host too.
 
   One Thurbox behaviour to know about: uninstalling any extension that merged
   into `~/.claude/settings.json` also removes every entry there whose command
@@ -149,7 +195,8 @@ text.
 | macOS, local tmux sessions | supported; the same suite runs in CI on macOS |
 | Thurbox 2.36.2 and the latest release | tested in CI |
 | Claude Code 2.1.285 | the transcript rows, screens and hook payload in `tests/fixtures/` were recorded from it |
-| SSH / WSL shared hosts | **not yet**: sessions on another host are skipped. The design is host-local — install on the host itself — and needs its own verification |
+| SSH / WSL shared hosts | supported, host-local (install on each host). The end-to-end suite runs a second real Thurbox as the host, reached through a stand-in `ssh` and `wsl.exe`; **not yet verified against a real remote machine or a real WSL distro** |
+| hosts with `share_sessions = false`, legacy and psmux hosts | **unsupported**: reported by `status` and refused by the setters, never sent |
 | native Windows (psmux) | **unverified**: the Windows paths exist (`src/platform.rs`) but have never run |
 | Thurbox TUI plugin | **not yet**: a separate plugin, built on [docs/CLI-CONTRACT.md](docs/CLI-CONTRACT.md) |
 
@@ -194,3 +241,9 @@ own tmux server, and the Thurbox TUI is never started. `claude` is replaced by
 `examples/fake_claude.rs`, which draws Claude 2.1.285's screens, writes its
 transcript rows and runs hooks from both `settings.json` and `--settings`, as
 Claude does. Nothing reaches your own Thurbox, tmux server or Claude config.
+
+`tests/e2e_remote.rs` gives a test two such sandboxes, a laptop and a shared
+host, each with its own database, tmux server and install. The laptop reaches
+the host through a stand-in `ssh` or `wsl.exe` on its PATH that runs the
+command under the host sandbox's environment, so Thurbox's real delegation,
+mirror and `session exec` paths run and only the network is faked.

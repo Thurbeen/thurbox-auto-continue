@@ -45,12 +45,38 @@ pub fn claude_config_dir() -> Option<PathBuf> {
     user_home().map(|h| h.join(".claude"))
 }
 
-/// The `thurbox-cli` program to run.
+/// The `thurbox-cli` program to run: the one on PATH, else the one in
+/// `~/.local/bin`, else the one Thurbox links under its data directory. A run
+/// delegated to a shared host over ssh gets a non-interactive PATH, which
+/// rarely holds either, and Thurbox provisions a host's CLI there, never on
+/// PATH.
 pub fn thurbox_cli() -> PathBuf {
-    std::env::var_os(THURBOX_CLI_ENV)
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(format!("thurbox-cli{}", std::env::consts::EXE_SUFFIX)))
+    if let Some(cli) = std::env::var_os(THURBOX_CLI_ENV).filter(|v| !v.is_empty()) {
+        return PathBuf::from(cli);
+    }
+    let name = format!("thurbox-cli{}", std::env::consts::EXE_SUFFIX);
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    if std::env::split_paths(&path).any(|d| d.join(&name).is_file()) {
+        return PathBuf::from(name);
+    }
+    [user_home().map(|h| h.join(".local").join("bin")), thurbox_data_dir().map(|d| d.join("bin"))]
+        .into_iter()
+        .flatten()
+        .map(|d| d.join(&name))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
+/// Thurbox's data directory, resolved the way Thurbox resolves it.
+fn thurbox_data_dir() -> Option<PathBuf> {
+    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if let Some(dir) = var("THURBOX_DATA_DIR") {
+        return Some(dir);
+    }
+    let base = var("XDG_DATA_HOME").or_else(|| {
+        if cfg!(windows) { var("LOCALAPPDATA") } else { user_home().map(|h| h.join(".local").join("share")) }
+    });
+    base.map(|b| b.join("thurbox"))
 }
 
 /// Quote one argument for the shell an Exec automation runs under: `sh -c` on
