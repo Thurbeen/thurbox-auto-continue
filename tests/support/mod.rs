@@ -63,28 +63,35 @@ pub fn thurbox_cli() -> PathBuf {
 
 /// The multiplexer Thurbox drives on this platform: tmux, or psmux on Windows.
 pub fn mux() -> PathBuf {
+    find_mux().expect("tests need tmux on PATH (psmux on Windows, or TAC_PSMUX)")
+}
+
+/// [`mux`], without panicking: `Drop` calls it while a failed test unwinds,
+/// and a second panic there aborts the whole test binary.
+fn find_mux() -> Option<PathBuf> {
     if cfg!(windows) {
-        if let Some(p) = std::env::var_os("TAC_PSMUX") {
-            return PathBuf::from(p);
-        }
-        return on_path("psmux.exe").expect("tests need psmux on PATH (or TAC_PSMUX)");
+        std::env::var_os("TAC_PSMUX").map(PathBuf::from).or_else(|| on_path("psmux.exe"))
+    } else {
+        on_path("tmux")
     }
-    on_path("tmux").expect("tests need tmux on PATH")
 }
 
 /// The shell Claude runs a hook command under: `sh` on POSIX; on Windows the
 /// Git Bash Claude Code requires, found the way Claude finds it.
 pub fn hook_shell() -> PathBuf {
+    find_hook_shell().expect("no Git Bash: set CLAUDE_CODE_GIT_BASH_PATH")
+}
+
+fn find_hook_shell() -> Option<PathBuf> {
     if !cfg!(windows) {
-        return PathBuf::from("sh");
+        return Some(PathBuf::from("sh"));
     }
     if let Some(p) = std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH") {
-        return PathBuf::from(p);
+        return Some(PathBuf::from(p));
     }
     // <git>\cmd\git.exe -> <git>\bin\bash.exe
-    let git = on_path("git.exe").expect("tests need git on PATH");
-    let bash = git.parent().and_then(Path::parent).map(|g| g.join("bin").join("bash.exe"));
-    bash.filter(|b| b.is_file()).expect("no Git Bash: set CLAUDE_CODE_GIT_BASH_PATH")
+    let git = on_path("git.exe")?;
+    git.parent().and_then(Path::parent).map(|g| g.join("bin").join("bash.exe")).filter(|b| b.is_file())
 }
 
 /// Put `src` at `dst`: a symlink on POSIX, a hard link (or a copy) on Windows,
@@ -212,7 +219,8 @@ impl Sandbox {
     pub fn path(&self) -> std::ffi::OsString {
         if cfg!(windows) {
             // psmux, git and PowerShell where the machine keeps them.
-            let mut dirs = vec![self.bin.clone(), mux().parent().unwrap().to_path_buf()];
+            let mut dirs = vec![self.bin.clone()];
+            dirs.extend(find_mux().and_then(|m| Some(m.parent()?.to_path_buf())));
             dirs.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
             std::env::join_paths(dirs).unwrap()
         } else {
@@ -252,8 +260,10 @@ impl Sandbox {
                 .env("APPDATA", self.home.join("AppData").join("Roaming"))
                 .env("LOCALAPPDATA", self.home.join("AppData").join("Local"))
                 .env("TEMP", &tmp)
-                .env("TMP", &tmp)
-                .env("CLAUDE_CODE_GIT_BASH_PATH", hook_shell());
+                .env("TMP", &tmp);
+            if let Some(bash) = find_hook_shell() {
+                c.env("CLAUDE_CODE_GIT_BASH_PATH", bash);
+            }
         }
         c.env("PATH", self.path())
             .env("HOME", &self.home)
@@ -430,8 +440,8 @@ impl Drop for Sandbox {
             let v: Value = serde_json::from_slice(&out.stdout).ok()?;
             v["tmux_socket"].as_str().map(String::from)
         });
-        if let Some(s) = socket {
-            let _ = self.command(mux()).args(["-L", &s, "kill-server"]).stderr(Stdio::null()).status();
+        if let (Some(s), Some(mux)) = (socket, find_mux()) {
+            let _ = self.command(mux).args(["-L", &s, "kill-server"]).stderr(Stdio::null()).status();
         }
     }
 }
