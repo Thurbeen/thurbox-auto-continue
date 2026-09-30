@@ -5,8 +5,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
-use thurbox_auto_continue::config::{self, Config, ENABLED_KEY};
-use thurbox_auto_continue::episode::{AUTOMATION_PREFIX, EPISODE_KEY, Episode};
+use thurbox_auto_continue::config::{self, Config, SESSION_SETTINGS};
+use thurbox_auto_continue::episode::{AUTOMATION_PREFIX, EPISODE_KEY, Episode, State};
 use thurbox_auto_continue::thurbox::{Session, Thurbox};
 use thurbox_auto_continue::{engine, platform};
 
@@ -19,7 +19,8 @@ use thurbox_auto_continue::{engine, platform};
         thurbox-auto-continue status                  every session, its toggle and its last episode\n  \
         thurbox-auto-continue enable <session>        turn it on for one Claude session\n  \
         thurbox-auto-continue config set enabled on   turn it on for every Claude session\n  \
-        thurbox-auto-continue status --json           the stable shape a plugin reads\n\n\
+        thurbox-auto-continue config set message 'keep going' --session <session>\n  \
+        thurbox-auto-continue status --json           the stable shape a plugin reads (docs/CLI-CONTRACT.md)\n\n\
         Kill switch: `thurbox-cli extension deactivate auto-continue` stops every pending send."
 )]
 struct Cli {
@@ -66,13 +67,31 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum ConfigCmd {
-    /// Print the effective config.
+    /// Print the effective settings, globally or for one session.
     Show {
+        #[arg(long)]
+        session: Option<String>,
         #[arg(long)]
         json: bool,
     },
-    /// Set one key: enabled, delay_secs, message, windows, max_attempts, on_menu, confirm_secs.
-    Set { key: String, value: String },
+    /// Set one key. Globally: enabled, delay_secs, message, windows, max_attempts,
+    /// on_menu, confirm_secs. With --session: enabled, message, delay_secs.
+    Set {
+        key: String,
+        value: String,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove a session's own value, so the global one applies again.
+    Unset {
+        key: String,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -98,22 +117,20 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Cmd::Status { session, json } => status(&home, session.as_deref(), json),
-        Cmd::Enable { session } => toggle(&session, Some(true)),
-        Cmd::Disable { session } => toggle(&session, Some(false)),
-        Cmd::Clear { session } => toggle(&session, None),
-        Cmd::Config { action: ConfigCmd::Show { json } } => Config::load(&home).map(|c| {
-            if json {
-                println!("{}", serde_json::to_string_pretty(&c).unwrap_or_default());
-            } else {
-                print!("{}", toml::to_string(&c).unwrap_or_default());
-            }
-        }),
-        Cmd::Config { action: ConfigCmd::Set { key, value } } => Config::load(&home).and_then(|mut c| {
-            c.set(&key, &value)?;
-            c.save(&home)?;
-            println!("{key} set; config at {}", home.join("config.toml").display());
-            Ok(())
-        }),
+        Cmd::Enable { session } => set(&home, "enabled", Some("on"), Some(&session), false),
+        Cmd::Disable { session } => set(&home, "enabled", Some("off"), Some(&session), false),
+        Cmd::Clear { session } => set(&home, "enabled", None, Some(&session), false),
+        Cmd::Config { action: ConfigCmd::Show { session, json } } => show(&home, session.as_deref(), json),
+        Cmd::Config { action: ConfigCmd::Set { key, value, session, json } } => {
+            return report(set(&home, &key, Some(&value), session.as_deref(), json), json);
+        }
+        Cmd::Config { action: ConfigCmd::Unset { key, session, json } } => {
+            let r = match session.as_deref() {
+                Some(s) => set(&home, &key, None, Some(s), json),
+                None => Err(format!("`unset` needs --session: a global `{key}` is changed with `config set`")),
+            };
+            return report(r, json);
+        }
         Cmd::Forget { .. } => forget_all(),
     };
     match result {
@@ -129,30 +146,103 @@ fn find(tb: &Thurbox, reference: &str) -> Result<Session, String> {
     tb.session(reference)?.ok_or_else(|| format!("no session `{reference}`; `thurbox-cli session list` shows the ids"))
 }
 
-fn toggle(reference: &str, on: Option<bool>) -> Result<(), String> {
+/// Exit code and output for a setter: with `--json`, one object on stdout
+/// whether it worked or not.
+fn report(result: Result<(), String>, json: bool) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            if json {
+                println!("{}", json!({ "ok": false, "error": e }));
+            } else {
+                eprintln!("error: {e}");
+            }
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Set (`value` Some) or clear (`None`) one setting, globally or for a session.
+fn set(
+    home: &std::path::Path,
+    key: &str,
+    value: Option<&str>,
+    session: Option<&str>,
+    json: bool,
+) -> Result<(), String> {
+    let Some(reference) = session else {
+        let value = value.ok_or("a global setting is changed with `config set`")?;
+        let mut cfg = Config::load(home)?;
+        cfg.set(key, value)?;
+        cfg.save(home)?;
+        let stored = toml::Table::try_from(&cfg).ok().and_then(|t| t.get(key).cloned());
+        if json {
+            println!("{}", json!({ "ok": true, "scope": "global", "key": key, "value": stored }));
+        } else {
+            println!("{key} set globally in {}", home.join("config.toml").display());
+        }
+        return Ok(());
+    };
+    let Some(&(_, meta_key)) = SESSION_SETTINGS.iter().find(|(k, _)| *k == key) else {
+        return Err(format!("`{key}` is global only; per session: enabled, message, delay_secs"));
+    };
+    let stored = match value {
+        Some(v) => Some(match key {
+            "enabled" => if config::validate_switch(v)? { "on" } else { "off" }.to_string(),
+            "message" => config::validate_message(v)?,
+            _ => config::validate_delay(v)?.to_string(),
+        }),
+        None => None,
+    };
     let tb = Thurbox::default();
     let s = find(&tb, reference)?;
-    match on {
-        Some(true) => {
-            if !s.is_claude() {
-                return Err(format!("`{}` runs `{}`; auto-continue only acts on Claude sessions", s.name, s.agent));
-            }
-            if !s.is_local() {
-                return Err(format!(
-                    "`{}` lives on `{}`; install the extension on that host and enable it there",
-                    s.name, s.backend_type
-                ));
-            }
-            tb.meta_set(&s.id, ENABLED_KEY, "on")?;
-            println!("auto-continue on for {} ({})", s.name, s.id);
+    if key == "enabled" && stored.as_deref() == Some("on") {
+        if !s.is_claude() {
+            return Err(format!("`{}` runs `{}`; auto-continue only acts on Claude sessions", s.name, s.agent));
         }
-        Some(false) => {
-            tb.meta_set(&s.id, ENABLED_KEY, "off")?;
-            println!("auto-continue off for {} ({})", s.name, s.id);
+        if !s.is_local() {
+            return Err(format!(
+                "`{}` lives on `{}`; install the extension on that host and set it there",
+                s.name, s.backend_type
+            ));
         }
-        None => {
-            tb.meta_unset(&s.id, ENABLED_KEY)?;
-            println!("{} follows the global default again", s.name);
+    }
+    match &stored {
+        Some(v) => tb.meta_set(&s.id, meta_key, v)?,
+        None => tb.meta_unset(&s.id, meta_key)?,
+    }
+    if json {
+        println!("{}", json!({ "ok": true, "scope": "session", "session": s.id, "key": key, "value": stored }));
+    } else {
+        match &stored {
+            Some(v) => println!("{key} = {v} for {} ({})", s.name, s.id),
+            None => println!("{} follows the global {key} again", s.name),
+        }
+    }
+    Ok(())
+}
+
+fn show(home: &std::path::Path, session: Option<&str>, json: bool) -> Result<(), String> {
+    let cfg = Config::load(home)?;
+    let effective = match session {
+        Some(r) => {
+            let tb = Thurbox::default();
+            let s = find(&tb, r)?;
+            cfg.for_session(&tb.meta_list(&s.id)?)
+        }
+        None => cfg.global(),
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&effective).unwrap_or_default());
+    } else {
+        let src = |s: config::Source| {
+            serde_json::to_value(s).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+        };
+        println!("enabled    = {:<8} ({})", effective.enabled.value, src(effective.enabled.source));
+        println!("message    = {:?} ({})", effective.message.value, src(effective.message.source));
+        println!("delay_secs = {:<8} ({})", effective.delay_secs.value, src(effective.delay_secs.source));
+        for w in &effective.warnings {
+            println!("warning: {w}");
         }
     }
     Ok(())
@@ -170,8 +260,8 @@ fn ineligible(s: &Session) -> Option<&'static str> {
     }
 }
 
-/// The shape `status --json` prints. `schema` is bumped on any breaking change,
-/// because the interface plugin reads it.
+/// The shape `status --json` prints (docs/CLI-CONTRACT.md). `schema` is
+/// bumped on any breaking change, because the interface plugin reads it.
 fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(), String> {
     let cfg = Config::load(home)?;
     let tb = Thurbox::default();
@@ -184,7 +274,11 @@ fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(
         .iter()
         .map(|s| {
             let meta = tb.meta_list(&s.id).unwrap_or_default();
-            let toggle = meta.get(ENABLED_KEY).and_then(Value::as_str);
+            let settings = cfg.for_session(&meta);
+            let overrides: serde_json::Map<String, Value> = SESSION_SETTINGS
+                .iter()
+                .map(|(k, mk)| (k.to_string(), meta.get(*mk).cloned().unwrap_or(Value::Null)))
+                .collect();
             let episode = meta.get(EPISODE_KEY).and_then(Value::as_str).and_then(Episode::parse);
             let why = ineligible(s);
             json!({
@@ -193,25 +287,42 @@ fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(
                 "agent": s.agent,
                 "eligible": why.is_none(),
                 "ineligible_reason": why,
-                "toggle": toggle,
-                "enabled": why.is_none() && config::effective(cfg.enabled, toggle),
+                "enabled": why.is_none() && settings.enabled.value,
+                "settings": settings,
+                "overrides": overrides,
                 "episode": episode.as_ref().map(|e| json!({
                     "state": e.state,
                     "label": e.label(),
+                    "reason": e.reason,
                     "window": e.window,
-                    "resets_at": e.resets_at,
-                    "fire_at_ms": e.fire_at_ms,
+                    "resets_at_ms": e.resets_at * 1000,
+                    "next_send_at_ms": (e.state == State::Armed).then_some(e.fire_at_ms),
                     "attempt": e.attempt,
+                    "max_attempts": cfg.max_attempts,
+                    "sent_at_ms": e.sent_at_ms,
                     "updated_at_ms": e.updated_at_ms,
                 })),
+                "last_outcome": episode.as_ref().filter(|e| e.state.is_final()).map(|e| json!({
+                    "state": e.state,
+                    "reason": e.reason,
+                    "label": e.label(),
+                    "at_ms": e.updated_at_ms,
+                })),
+                "warnings": settings.warnings,
             })
         })
         .collect();
+    let global = cfg.global();
     let out = json!({
-        "schema": 1,
-        "home": home,
+        "schema": 2,
         "extension_active": tb.extension_active().ok(),
-        "config": cfg,
+        "global": {
+            "enabled": global.enabled,
+            "message": global.message,
+            "delay_secs": global.delay_secs,
+            "windows": cfg.windows,
+            "max_attempts": cfg.max_attempts,
+        },
         "sessions": rows,
     });
     if as_json {
@@ -242,6 +353,9 @@ fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(
         };
         let ep = r["episode"]["label"].as_str().unwrap_or("-");
         println!("{:<24} {:<18} episode: {ep}", r["name"].as_str().unwrap_or(""), state);
+        for w in r["warnings"].as_array().into_iter().flatten() {
+            println!("  warning: {}", w.as_str().unwrap_or(""));
+        }
     }
     Ok(())
 }
@@ -252,9 +366,11 @@ fn forget_all() -> Result<(), String> {
         tb.remove_automation(a.id)?;
     }
     for s in tb.sessions()? {
-        tb.meta_unset(&s.id, ENABLED_KEY)?;
+        for (_, key) in SESSION_SETTINGS {
+            tb.meta_unset(&s.id, key)?;
+        }
         tb.meta_unset(&s.id, EPISODE_KEY)?;
     }
-    println!("forgot every auto-continue toggle, episode and pending send");
+    println!("forgot every auto-continue setting, episode and pending send");
     Ok(())
 }

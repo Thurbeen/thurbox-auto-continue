@@ -90,22 +90,38 @@ thurbox-auto-continue clear <session>           # back to the global default
 thurbox-auto-continue status                    # what is on, and each session's last episode
 ```
 
-A session's own toggle beats the global setting in both directions.
+`enabled`, `message` and `delay_secs` can also be set for one session, and a
+session's own value beats the global one in both directions:
 
-`config.toml`:
+```sh
+thurbox-auto-continue config set message 'resume the task' --session <session>
+thurbox-auto-continue config set delay_secs 60 --session <session>
+thurbox-auto-continue config unset message --session <session>   # back to the global value
+thurbox-auto-continue config show --session <session>            # what applies, and where it comes from
+```
 
-| key | default | meaning |
-|---|---|---|
-| `enabled` | `false` | the global default |
-| `delay_secs` | `300` | how long after the reset to send |
-| `message` | `"continue"` | what is typed |
-| `windows` | `["five_hour"]` | windows acted on; add `"seven_day"` for the weekly one |
-| `max_attempts` | `2` | sends allowed while each one is rejected again, then `gave-up` |
-| `on_menu` | `"escape"` | the limit menu open: close it once, or `"skip"` |
-| `confirm_secs` | `20` | how long to wait for `working` after Enter before `unconfirmed` (at most 20) |
+A message must be one line of 1–500 characters and must not start with `/` or
+`!` (those run a Claude command or a shell). `delay_secs` is 0–86400. A
+message or switch changed after a limit is recorded still applies to that
+send; a changed delay applies from the next limit.
 
-`thurbox-auto-continue status --json` is the stable shape (`"schema": 1`) for
-scripts and for the interface plugin to come.
+`config.toml` (every key optional):
+
+| key | default | per session | meaning |
+|---|---|---|---|
+| `enabled` | `false` | yes | the global default |
+| `delay_secs` | `300` | yes | how long after the reset to send |
+| `message` | `"continue"` | yes | what is typed |
+| `windows` | `["five_hour"]` | no | windows acted on; add `"seven_day"` for the weekly one |
+| `max_attempts` | `2` | no | sends allowed while each one is rejected again, then `gave-up` |
+| `on_menu` | `"escape"` | no | the limit menu open: close it once, or `"skip"` |
+| `confirm_secs` | `20` | no | how long to wait for `working` after Enter before `unconfirmed` (at most 20) |
+
+For scripts and the Thurbox plugin, [docs/CLI-CONTRACT.md](docs/CLI-CONTRACT.md)
+is the contract: `status --json` (`"schema": 2`) with each session's effective
+settings and where each comes from, its episode, next send and last outcome,
+and the setters with their validation and exit codes. It carries no transcript
+text.
 
 ## Stop it, remove it
 
@@ -115,7 +131,7 @@ scripts and for the interface plugin to come.
 - **Off everywhere:** `thurbox-auto-continue config set enabled off` (sessions
   you enabled one by one stay on until you `disable` or `clear` them).
 - **Uninstall:** `./install.sh --uninstall`. It runs `thurbox-auto-continue
-  forget --all` (every toggle, episode and pending send), then
+  forget --all` (every per-session setting, episode and pending send), then
   `thurbox-cli extension uninstall auto-continue --purge`, which takes our hook
   out of `~/.claude/settings.json` and leaves your own entries there.
 
@@ -135,7 +151,7 @@ scripts and for the interface plugin to come.
 | Claude Code 2.1.285 | the transcript rows, screens and hook payload in `tests/fixtures/` were recorded from it |
 | SSH / WSL shared hosts | **not yet**: sessions on another host are skipped. The design is host-local — install on the host itself — and needs its own verification |
 | native Windows (psmux) | **unverified**: the Windows paths exist (`src/platform.rs`) but have never run |
-| Thurbox TUI controls | **not yet**: badge, toggles and the settings switch are a separate plugin |
+| Thurbox TUI plugin | **not yet**: a separate plugin, built on [docs/CLI-CONTRACT.md](docs/CLI-CONTRACT.md) |
 
 ## Limitations
 
