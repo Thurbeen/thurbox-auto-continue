@@ -152,11 +152,11 @@ fn plugin_installs_configures_and_uninstalls() {
         &ui,
         "settle\n\
          select Every Claude session\nsettle\n\
-         key m\nkey ctrl+u\ntype carry on\nkey enter\nsettle\nexpect ✓ saved\n\
-         key d\nkey ctrl+u\ntype 0\nkey enter\nsettle\nexpect ✓ saved\n\
+         key m\ntype carry on\nkey enter\nsettle\nexpect ✓ saved\n\
+         key d\ntype 0\nkey enter\nsettle\nexpect ✓ saved\n\
          select worker\nsettle\n\
          key e\nsettle\nexpect ✓ saved worker on\n\
-         key m\nkey ctrl+u\ntype resume the task\nkey enter\nsettle\nexpect ✓ saved worker message\n\
+         key m\ntype resume the task\nkey enter\nsettle\nexpect ✓ saved worker message\n\
          expect resume the task\n",
     );
     let global = show(&sb, None);
@@ -174,9 +174,9 @@ fn plugin_installs_configures_and_uninstalls() {
         &sb,
         &ui,
         "settle\nselect worker\nsettle\n\
-         key d\nkey ctrl+u\ntype -3\nkey enter\nexpect 0 to 86400\nkey esc\n\
-         key m\nkey ctrl+u\nkey enter\nexpect must not be blank\n\
-         key ctrl+u\ntype !rm -rf\nkey enter\nexpect must not start with\nkey esc\n",
+         key d\ntype -3\nkey enter\nexpect 0 to 86400\nkey esc\n\
+         key m\nkey enter\nexpect must not be blank\n\
+         key esc\nkey m\ntype !rm -rf\nkey enter\nexpect must not start with\nkey esc\n",
     );
     assert_eq!(show(&sb, Some(&worker))["message"]["value"], "resume the task");
     assert_eq!(show(&sb, Some(&worker))["delay_secs"]["source"], "global");
@@ -224,7 +224,7 @@ fn plugin_monitors_a_limit_episode() {
         &ui,
         "settle\nselect worker\nsettle\n\
          key e\nsettle\n\
-         key m\nkey ctrl+u\ntype keep at it\nkey enter\nsettle\nexpect ✓ saved\n\
+         key m\ntype keep at it\nkey enter\nsettle\nexpect ✓ saved\n\
          expire\nbadge worker ↻\nnobadge idle ↻\n",
     );
 

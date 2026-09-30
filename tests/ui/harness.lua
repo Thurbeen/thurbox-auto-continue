@@ -444,7 +444,38 @@ local function key_event(name)
   return { key = bare, char = char, ctrl = ctrl, alt = alt, shift = false, cmd = false }
 end
 
---- Press a key while `p` has focus: its bindings first, then `on_key`.
+-- The chords thurbox's stock panes claim globally (`ctrl+u` restores a
+-- deleted session, `ctrl+k` moves the list, …), read from the release's own
+-- plugin files. The kernel resolves those before a focused pane's `on_key`,
+-- so a pane that expects one of them in a text field never receives it.
+local stock_globals
+local function stock_global(chord)
+  if not stock_globals then
+    stock_globals = {}
+    local ls = io.popen("ls " .. H.quote(UI .. "/plugins"))
+    for file in ls:lines() do
+      if file:match("%.lua$") then
+        local chunk = load(read_file(UI .. "/plugins/" .. file), "@" .. file, "t", G)
+        local ok, def = pcall(chunk)
+        if ok and type(def) == "table" then
+          for _, b in ipairs(def.keys or {}) do
+            if b.scope == "global" then
+              stock_globals[b.key] = b.action
+            end
+          end
+        end
+      end
+    end
+    ls:close()
+  end
+  return stock_globals[chord]
+end
+
+--- Press a key while `p` has focus, routed as the kernel routes it: `p`'s own
+--- binding first, then a global binding of a stock pane (which takes the key),
+--- then `on_key`. Returns false, and records the action in `H.swallowed`, when
+--- a stock pane took it.
+H.swallowed = {}
 function H.key(p, name)
   for _, b in ipairs(p.def.keys or {}) do
     if b.key == name then
@@ -453,6 +484,11 @@ function H.key(p, name)
       end
       break
     end
+  end
+  local taken = stock_global(name)
+  if taken then
+    H.swallowed[#H.swallowed + 1] = taken
+    return false
   end
   return H.call(p, "on_key", key_event(name)) and true or false
 end
@@ -646,7 +682,9 @@ function H.lines(node, out)
     out[#out + 1] = l
   end
   if node.type == "input" or node.type == "field" then
-    out[#out + 1] = tostring(node.value or "")
+    local value = tostring(node.value or "")
+    -- An empty field shows its placeholder, as the painter does.
+    out[#out + 1] = value ~= "" and value or tostring(node.placeholder or "")
   end
   for _, child in ipairs(node.children or {}) do
     H.lines(child, out)

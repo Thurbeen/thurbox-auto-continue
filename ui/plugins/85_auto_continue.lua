@@ -308,8 +308,20 @@ local function start_edit(target, key)
     notice(name, "error")
     return
   end
+  -- The field opens empty, the current value as its placeholder: typing the
+  -- new one needs no clearing first, and the readline clear (`ctrl+u`) is a
+  -- global chord in thurbox (restore a deleted session), never the field's.
   local value = current_value(target, key)
-  state.edit = { target = target, key = key, name = name, field = textinput.new(value ~= nil and tostring(value) or "") }
+  if value ~= nil and key == "delay_secs" then
+    value = tostring(math.floor(value)) .. " s"
+  end
+  state.edit = {
+    target = target,
+    key = key,
+    name = name,
+    now = value ~= nil and tostring(value) or nil,
+    field = textinput.new(""),
+  }
   state.edit_error = nil
 end
 
@@ -552,6 +564,7 @@ local function settings_lines(target, status, gen, w, out)
     if edit and edit.target == target and edit.key == key then
       out[#out + 1] = textinput.node(edit.field, {
         label = label .. (key == "message" and " — one line, 1-200 characters" or " — seconds, 0-86400"),
+        placeholder = edit.now and ("now: " .. edit.now) or "",
         focused = true,
       })
       if state.edit_error then
@@ -734,10 +747,11 @@ local function render(ctx)
       children[#children + 1] = session_row(session_by_id(t), status, i == index, w, now)
     end
   end
-  children[#children + 1] = { type = "text", fill = 1, text = "" }
+  children[#children + 1] = blank()
   for _, d in ipairs(detail) do
     children[#children + 1] = d
   end
+  children[#children + 1] = { type = "text", fill = 1, text = "" }
   children[#children + 1] = line({ span(" " .. hints(target, status), theme.muted) }, w)
 
   return ui.panel({
