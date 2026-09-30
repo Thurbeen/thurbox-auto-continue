@@ -99,9 +99,9 @@ grant() {
     screen >&2
     exit 1
 }
-grant 85_auto_continu
+grant 85_auto
 for _ in $(seq 1 40); do k k 0.1; done
-grant 86_auto_continu
+grant 86_auto
 k Escape 1
 k C-q 2
 "${TM[@]}" kill-server 2>/dev/null || true
