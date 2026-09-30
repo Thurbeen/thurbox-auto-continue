@@ -1,8 +1,8 @@
 //! Every platform-specific decision lives here, so a port has one file to read.
 //!
-//! Linux and macOS (POSIX) are the verified targets. The Windows branches are
-//! written but UNVERIFIED: nothing here has run on native Windows, and the
-//! README says so.
+//! Linux and macOS run the end-to-end suite against tmux; native Windows runs
+//! it against psmux, Thurbox's PowerShell keeper and `cmd /C` (CI's
+//! `test-windows` job). What Windows does differently is written down here.
 
 use std::path::PathBuf;
 
@@ -53,14 +53,48 @@ pub fn thurbox_cli() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(format!("thurbox-cli{}", std::env::consts::EXE_SUFFIX)))
 }
 
-/// Quote one argument for the shell an Exec automation runs under: `sh -c` on
-/// POSIX, `cmd /C` on Windows (unverified).
-pub fn shell_quote(arg: &str) -> String {
+/// One argument of an Exec automation's command, spelled for the shell
+/// Thurbox runs it under: `sh -c` on POSIX, `cmd /C` on Windows. `None` when
+/// that shell cannot be handed it.
+///
+/// On Windows no quoting survives: Thurbox passes the command to `cmd /C` as
+/// one argument, the Rust runtime escapes every `"` in it as `\"`, and `cmd`
+/// does not read that escape (measured: `"C:\x.exe" --version` fails as
+/// `'\"C:\x.exe\"' is not recognized`). So an argument goes in bare, or as its
+/// 8.3 short path when that has nothing `cmd` would split on, or not at all.
+pub fn shell_arg(arg: &str) -> Option<String> {
     if cfg!(windows) {
-        format!("\"{}\"", arg.replace('"', "\"\""))
+        if cmd_safe(arg) {
+            return Some(arg.to_string());
+        }
+        short_path(arg).filter(|s| cmd_safe(s))
     } else {
-        format!("'{}'", arg.replace('\'', "'\\''"))
+        Some(format!("'{}'", arg.replace('\'', "'\\''")))
     }
+}
+
+/// Whether `cmd` reads `arg` back as the one argument it is.
+fn cmd_safe(arg: &str) -> bool {
+    !arg.is_empty() && !arg.chars().any(|c| c.is_whitespace() || "\"&|<>^%!(),;=".contains(c))
+}
+
+/// The 8.3 short form of an existing path, when the volume keeps them.
+#[cfg(windows)]
+fn short_path(path: &str) -> Option<String> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetShortPathNameW(long: *const u16, short: *mut u16, len: u32) -> u32;
+    }
+    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+    let mut buf = vec![0u16; 1024];
+    // SAFETY: `wide` is NUL-terminated and `buf` is as long as we say it is.
+    let n = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    (n > 0 && n < buf.len()).then(|| String::from_utf16_lossy(&buf[..n]))
+}
+
+#[cfg(not(windows))]
+fn short_path(_: &str) -> Option<String> {
+    None
 }
 
 /// Whether a Thurbox backend type is this machine's own multiplexer. A session
@@ -76,7 +110,24 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn posix_quote_survives_single_quotes() {
-        assert_eq!(shell_quote("/a b/it's"), r"'/a b/it'\''s'");
+        assert_eq!(shell_arg("/a b/it's").as_deref(), Some(r"'/a b/it'\''s'"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_gets_bare_arguments_or_none() {
+        assert_eq!(shell_arg(r"C:\Users\me\x.exe").as_deref(), Some(r"C:\Users\me\x.exe"));
+        assert_eq!(shell_arg("0d9c-4e2f").as_deref(), Some("0d9c-4e2f"));
+        // Not a path, so there is no short form to fall back on.
+        assert_eq!(shell_arg("a b&c"), None);
+    }
+
+    #[test]
+    fn cmd_splits_on_whitespace_and_its_operators() {
+        assert!(cmd_safe(r"C:\Users\me\.config/thurbox"));
+        for bad in ["", "a b", "a\"b", "a&b", "a|b", "a^b", "%PATH%", "a(b)", "a,b", "a;b", "a=b"] {
+            assert!(!cmd_safe(bad), "{bad}");
+        }
     }
 
     #[test]

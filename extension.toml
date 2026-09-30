@@ -37,7 +37,12 @@ source = "extension/claude-settings.json"
 requires_dir = "~/.claude"
 
 # The fallback for an episode the hook missed, and for an overdue send.
+#
+# By name on PATH, like the hook, and with no path in it: Thurbox runs the
+# command under `sh -c` on POSIX and `cmd /C` on Windows, and no quoting reads
+# back the same in both — `cmd` takes a quote as part of the program name. The
+# binary finds the default home itself.
 [[automations]]
 name = "auto-continue-sweep"
 trigger = "cron:*/15 * * * *"
-command = "'{home}/bin/thurbox-auto-continue' sweep --home '{home}'"
+command = "thurbox-auto-continue sweep"

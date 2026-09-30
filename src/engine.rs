@@ -209,12 +209,12 @@ fn arm(ctx: &Ctx, s: &Session, r: Rejection, transcript: &Path, delay_secs: u64)
     ctx.drop_automations(&s.id);
     let exe =
         std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "thurbox-auto-continue".into());
-    let command = format!(
-        "{} fire {} --home {}",
-        platform::shell_quote(&exe),
-        platform::shell_quote(&s.id),
-        platform::shell_quote(&ctx.home.display().to_string())
-    );
+    let words = [exe, s.id.clone(), ctx.home.display().to_string()].map(|w| platform::shell_arg(&w));
+    let [Some(exe), Some(id), Some(home)] = words else {
+        // Still armed: the sweep fires it once it is overdue.
+        return ctx.log("arm", &s.id, "a path the platform shell cannot be handed; left to the sweep");
+    };
+    let command = format!("{exe} fire {id} --home {home}");
     // Again now: the calls above take time, and an `at:` in the past never fires.
     ep.fire_at_ms = fire_at(&r, delay_secs);
     match ctx.tb.schedule_exec(&format!("{AUTOMATION_PREFIX}{}", s.id), ep.fire_at_ms, &command) {
