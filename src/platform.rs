@@ -108,6 +108,9 @@ mod tests {
     #[test]
     fn only_local_backends_are_ours() {
         assert!(is_local_backend("local-tmux"));
+        // Thurbox 2.39.7 spells the local route with its multiplexer.
+        assert!(is_local_backend("local:tmux"));
+        assert!(is_local_backend("local:psmux"));
         assert!(!is_local_backend("ssh:build-box"));
         assert!(!is_local_backend("wsl:Ubuntu"));
     }

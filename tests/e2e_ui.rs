@@ -182,7 +182,11 @@ fn plugin_installs_configures_and_uninstalls() {
     assert_eq!(show(&sb, Some(&worker))["delay_secs"]["source"], "global");
 
     // A session that is not Claude's: no controls, nothing written.
-    live_ok(&sb, &ui, "settle\nselect shell\nsettle\nexpect not a Claude session\nreject e on/off\nkey e\nkey m\nsettle\n");
+    live_ok(
+        &sb,
+        &ui,
+        "settle\nselect shell\nsettle\nexpect not a Claude session\nreject e on/off\nkey e\nkey m\nsettle\n",
+    );
     assert_eq!(meta(&sb, &shell, "auto-continue.enabled"), None);
     assert_eq!(meta(&sb, &shell, "auto-continue.message"), None);
 
@@ -217,7 +221,11 @@ fn plugin_monitors_a_limit_episode() {
     let idle = sb.session("idle", "claude");
     install_plugin(&sb);
     // Nothing is armed and nothing is on: no badge anywhere.
-    live_ok(&sb, &ui, "settle\nnobadge worker ↻\nnobadge idle ↻\nselect worker\nsettle\nexpect no limit recorded yet\n");
+    live_ok(
+        &sb,
+        &ui,
+        "settle\nnobadge worker ↻\nnobadge idle ↻\nselect worker\nsettle\nexpect no limit recorded yet\n",
+    );
 
     live_ok(
         &sb,

@@ -141,6 +141,8 @@ that one session.
   session's `backend_type` (`ssh:<name>`, `wsl:<name>`); `reason` is `null` when
   the host answered, else one of the unsupported reasons below;
   `extension_active` is the host's own kill switch, `null` when not read.
+  From Thurbox 2.39.7 a `backend_type` may also name the host's multiplexer
+  (`ssh:<name>:tmux`); `backend` carries it as Thurbox spells it.
 
 What `status` never contains: transcript text or paths, screen contents, or the
 prompts the session received. `message` is the user's own setting and is shown.

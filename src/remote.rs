@@ -96,9 +96,12 @@ impl Unsupported {
     }
 }
 
-/// The host part of a remote backend type: `devbox` for `ssh:devbox`.
+/// The host part of a remote backend type: `devbox` for `ssh:devbox`, and for
+/// `ssh:devbox:tmux` — Thurbox 2.39.7 names the host's multiplexer after it,
+/// and a host name may not contain `:`.
 pub fn host_name(backend_type: &str) -> Option<&str> {
-    backend_type.strip_prefix("ssh:").or_else(|| backend_type.strip_prefix("wsl:"))
+    let rest = backend_type.strip_prefix("ssh:").or_else(|| backend_type.strip_prefix("wsl:"))?;
+    rest.split(':').next()
 }
 
 /// The hosts this machine's Thurbox knows, and which of them share.
@@ -228,6 +231,18 @@ mod tests {
         assert_eq!(hosts.check(&session("ssh:b")), Err(Unsupported::NotShared));
         assert_eq!(hosts.check(&session("ssh:c")), Err(Unsupported::UnknownHost));
         assert_eq!(hosts.check(&session("psmux:x")), Err(Unsupported::UnknownHost));
+        // Thurbox 2.39.7 names the host's multiplexer too: `ssh:<host>[:<mux>]`.
+        assert_eq!(hosts.check(&session("ssh:a:tmux")), Ok(()));
+        assert_eq!(hosts.check(&session("wsl:a:tmux")), Ok(()));
+        assert_eq!(hosts.check(&session("ssh:b:tmux")), Err(Unsupported::NotShared));
+    }
+
+    #[test]
+    fn the_host_is_the_machine_part_of_the_route() {
+        assert_eq!(host_name("ssh:devbox"), Some("devbox"));
+        assert_eq!(host_name("ssh:devbox:tmux"), Some("devbox"));
+        assert_eq!(host_name("wsl:Ubuntu:psmux"), Some("Ubuntu"));
+        assert_eq!(host_name("local:tmux"), None);
     }
 
     #[test]
