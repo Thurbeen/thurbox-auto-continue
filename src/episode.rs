@@ -91,8 +91,10 @@ pub const RETRY_WINDOW_MS: i64 = 30 * 60 * 1000;
 
 /// The attempt number a new rejection gets, given the previous episode.
 pub fn next_attempt(previous: Option<&Episode>, rejected_at_ms: i64) -> u32 {
+    // Any episode that pressed Enter counts, whatever it managed to record
+    // afterwards: a run cut off after Enter still sent.
     match previous {
-        Some(Episode { state: State::Sent | State::Unconfirmed, sent_at_ms: Some(sent), attempt, .. })
+        Some(Episode { sent_at_ms: Some(sent), attempt, .. })
             if rejected_at_ms >= *sent && rejected_at_ms - sent <= RETRY_WINDOW_MS =>
         {
             attempt + 1
@@ -133,7 +135,18 @@ mod tests {
         assert_eq!(next_attempt(Some(&ep(State::Sent, 1, 1_000)), 2_000), 2);
         assert_eq!(next_attempt(Some(&ep(State::Unconfirmed, 2, 1_000)), 2_000), 3);
         assert_eq!(next_attempt(Some(&ep(State::Sent, 1, 1_000)), 1_000 + RETRY_WINDOW_MS + 1), 1);
-        assert_eq!(next_attempt(Some(&ep(State::Skipped, 1, 1_000)), 2_000), 1);
+        assert_eq!(next_attempt(Some(&ep(State::Skipped, 1, 1_000)), 2_000), 2);
+        let mut unsent = ep(State::Skipped, 1, 1_000);
+        unsent.sent_at_ms = None;
+        assert_eq!(next_attempt(Some(&unsent), 2_000), 1);
+    }
+
+    /// Enter was pressed and the run died before recording it: the send still
+    /// counts, or a message rejected every window would never give up.
+    #[test]
+    fn a_send_the_run_did_not_live_to_record_still_counts() {
+        assert_eq!(next_attempt(Some(&ep(State::Abandoned, 2, 1_000)), 2_000), 3);
+        assert_eq!(next_attempt(Some(&ep(State::Claimed, 1, 1_000)), 2_000), 2);
     }
 
     #[test]

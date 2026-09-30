@@ -17,6 +17,8 @@ use crate::{log, platform};
 /// No run lives longer than this, whatever hangs.
 pub const DEADLINE: Duration = Duration::from_secs(45);
 
+/// The confirmation wait is capped so a run always ends inside [`DEADLINE`].
+const MAX_CONFIRM_SECS: u64 = 20;
 /// How old a rejection the hook may still pick up: the hook fires as the turn
 /// fails, so anything older is some earlier episode.
 const HOOK_FRESH_MS: i64 = 10 * 60 * 1000;
@@ -25,10 +27,11 @@ const SWEEP_FRESH_MS: i64 = 24 * 60 * 60 * 1000;
 /// How long past its time a send has to be before the sweep fires it itself.
 const OVERDUE_MS: i64 = 90 * 1000;
 /// `at:` triggers in the past never fire, so a send is never scheduled sooner.
-const MIN_LEAD_MS: i64 = 2000;
+const MIN_LEAD_MS: i64 = 5000;
 
 struct Ctx {
     home: PathBuf,
+    locks: PathBuf,
     cfg: Config,
     tb: Thurbox,
 }
@@ -36,7 +39,12 @@ struct Ctx {
 impl Ctx {
     fn load(home: &Path) -> Option<Self> {
         match Config::load(home) {
-            Ok(cfg) => Some(Self { home: home.to_path_buf(), cfg, tb: Thurbox::default() }),
+            Ok(cfg) => Some(Self {
+                home: home.to_path_buf(),
+                locks: platform::lock_dir().unwrap_or_else(|| home.join("locks")),
+                cfg,
+                tb: Thurbox::default(),
+            }),
             Err(e) => {
                 log::event(home, "config", "-", &format!("unreadable: {e}"));
                 None
@@ -48,12 +56,11 @@ impl Ctx {
         log::event(&self.home, verb, session, what);
     }
 
-    fn enabled(&self, session: &str) -> bool {
-        // An unreadable toggle is not an `on`.
-        match self.tb.meta_get(session, ENABLED_KEY) {
-            Ok(toggle) => config::effective(self.cfg.enabled, toggle.as_deref()),
-            Err(_) => false,
-        }
+    /// Whether the session is on. An unreadable toggle is an error, never an `on`
+    /// and never a lasting `off`.
+    fn enabled(&self, session: &str) -> Result<bool, String> {
+        let toggle = self.tb.meta_get(session, ENABLED_KEY)?;
+        Ok(config::effective(self.cfg.enabled, toggle.as_deref()))
     }
 
     fn episode(&self, session: &str) -> Result<Option<Episode>, String> {
@@ -117,7 +124,7 @@ pub fn record(home: &Path, stdin: &str) {
     };
     let Some(ctx) = Ctx::load(home) else { return };
     let Ok(Some(s)) = ctx.tb.session(&session) else { return };
-    if !eligible(&s) || !ctx.enabled(&s.id) {
+    if !eligible(&s) || !ctx.enabled(&s.id).unwrap_or(false) {
         return;
     }
     // Claude batches its transcript writes, so the row can trail the hook.
@@ -133,7 +140,7 @@ pub fn record(home: &Path, stdin: &str) {
         ctx.log("record", &s.id, "no proven quota episode");
         return;
     };
-    let Ok(Some(_lock)) = SessionLock::acquire(&ctx.home, &s.id, Duration::from_secs(25)) else {
+    let Ok(Some(_lock)) = SessionLock::acquire(&ctx.locks, &s.id, Duration::from_secs(25)) else {
         ctx.log("record", &s.id, "lock busy; left to the sweep");
         return;
     };
@@ -162,7 +169,7 @@ fn arm(ctx: &Ctx, s: &Session, r: Rejection, transcript: &Path) {
         window: r.window.clone(),
         resets_at: r.resets_at,
         rejected_at_ms: r.at_ms,
-        fire_at_ms: (r.resets_at * 1000 + ctx.cfg.delay_secs as i64 * 1000).max(now_ms() + MIN_LEAD_MS),
+        fire_at_ms: fire_at(ctx, &r),
         transcript: transcript.display().to_string(),
         state: State::Armed,
         reason: None,
@@ -211,6 +218,8 @@ fn arm(ctx: &Ctx, s: &Session, r: Rejection, transcript: &Path) {
         platform::shell_quote(&s.id),
         platform::shell_quote(&ctx.home.display().to_string())
     );
+    // Again now: the calls above take time, and an `at:` in the past never fires.
+    ep.fire_at_ms = fire_at(ctx, &r);
     match ctx.tb.schedule_exec(&format!("{AUTOMATION_PREFIX}{}", s.id), ep.fire_at_ms, &command) {
         Ok(id) => {
             ep.automation_id = Some(id);
@@ -222,12 +231,16 @@ fn arm(ctx: &Ctx, s: &Session, r: Rejection, transcript: &Path) {
     ctx.log("arm", &s.id, &format!("armed attempt={} window={} fire_at_ms={}", ep.attempt, ep.window, ep.fire_at_ms));
 }
 
+fn fire_at(ctx: &Ctx, r: &Rejection) -> i64 {
+    (r.resets_at * 1000 + ctx.cfg.delay_secs as i64 * 1000).max(now_ms() + MIN_LEAD_MS)
+}
+
 // --- fire -------------------------------------------------------------------
 
 pub fn fire(home: &Path, session: &str) {
     watchdog(home, "fire");
     let Some(ctx) = Ctx::load(home) else { return };
-    let Ok(Some(_lock)) = SessionLock::acquire(&ctx.home, session, Duration::from_secs(2)) else { return };
+    let Ok(Some(_lock)) = SessionLock::acquire(&ctx.locks, session, Duration::from_secs(2)) else { return };
     fire_locked(&ctx, session, false);
 }
 
@@ -267,8 +280,10 @@ fn fire_locked(ctx: &Ctx, session: &str, overdue_only: bool) {
         Ok(false) => return ctx.finish(session, &mut ep, State::Skipped, Some("extension-inactive")),
         Err(e) => return ctx.log("fire", session, &format!("gate unreadable: {e}")),
     }
-    if !ctx.enabled(session) {
-        return ctx.finish(session, &mut ep, State::Skipped, Some("disabled"));
+    match ctx.enabled(session) {
+        Ok(true) => {}
+        Ok(false) => return ctx.finish(session, &mut ep, State::Skipped, Some("disabled")),
+        Err(e) => return ctx.log("fire", session, &format!("gate unreadable: {e}")),
     }
     let s = match ctx.tb.session(session) {
         Ok(Some(s)) => s,
@@ -293,7 +308,11 @@ fn fire_locked(ctx: &Ctx, session: &str, overdue_only: bool) {
         Err(e) => return ctx.log("fire", session, &format!("gate unreadable: {e}")),
     }
 
-    // Claim before acting.
+    // Claim before acting, on the episode as it is now.
+    match ctx.episode(session) {
+        Ok(Some(now)) if now.id == ep.id && now.state == State::Armed => {}
+        _ => return,
+    }
     ep.state = State::Claimed;
     if let Err(e) = ctx.save(session, &mut ep) {
         return ctx.log("fire", session, &format!("could not claim: {e}"));
@@ -339,14 +358,20 @@ fn act(ctx: &Ctx, session: &str, ep: &mut Episode) -> Result<(State, Option<&'st
         return Ok((State::Skipped, Some("moved-before-enter")));
     }
     let before = ctx.tb.session(session)?.and_then(|s| s.hook_state_at);
-    ctx.tb.key(session, "enter")?;
+    // Recorded before Enter, so a run cut off after it still counts the send.
     ep.sent_at_ms = Some(now_ms());
+    ctx.save(session, ep)?;
+    if let Err(e) = ctx.tb.key(session, "enter") {
+        // Enter may have landed even though the call failed.
+        ctx.log("fire", session, &format!("enter: {e}"));
+        return Ok((State::Unconfirmed, None));
+    }
     ctx.log("fire", session, "submitted");
 
-    let end = Instant::now() + Duration::from_secs(ctx.cfg.confirm_secs);
+    let end = Instant::now() + Duration::from_secs(ctx.cfg.confirm_secs.min(MAX_CONFIRM_SECS));
     while Instant::now() < end {
         std::thread::sleep(Duration::from_millis(200));
-        if ctx.tb.session(session)?.is_some_and(|s| s.hook_state_at > before) {
+        if ctx.tb.session(session).ok().flatten().is_some_and(|s| s.hook_state_at > before) {
             return Ok((State::Sent, None));
         }
     }
@@ -376,10 +401,10 @@ pub fn sweep(home: &Path) {
     let Ok(sessions) = ctx.tb.sessions() else { return };
     let claude_config = platform::claude_config_dir();
     for s in sessions.iter().filter(|s| eligible(s)) {
-        if !ctx.enabled(&s.id) {
+        if !ctx.enabled(&s.id).unwrap_or(false) {
             continue;
         }
-        let Ok(Some(_lock)) = SessionLock::acquire(&ctx.home, &s.id, Duration::ZERO) else { continue };
+        let Ok(Some(_lock)) = SessionLock::acquire(&ctx.locks, &s.id, Duration::ZERO) else { continue };
         let ep = ctx.episode(&s.id).ok().flatten();
         if ep.as_ref().is_some_and(|e| matches!(e.state, State::Armed | State::Claimed)) {
             fire_locked(&ctx, &s.id, true);

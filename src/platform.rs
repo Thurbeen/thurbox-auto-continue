@@ -30,6 +30,12 @@ pub fn default_home() -> Option<PathBuf> {
     user_home().map(|h| h.join(".config").join("thurbox").join("auto-continue"))
 }
 
+/// Where the per-session locks live. Not under the extension home: a run
+/// started with another `--home` must still contend for the same lock.
+pub fn lock_dir() -> Option<PathBuf> {
+    user_home().map(|h| h.join(".config").join("thurbox").join("auto-continue").join("locks"))
+}
+
 /// Claude's own config directory: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
 /// Only the sweep needs it; the hook is handed the transcript path directly.
 pub fn claude_config_dir() -> Option<PathBuf> {

@@ -102,7 +102,7 @@ A session's own toggle beats the global setting in both directions.
 | `windows` | `["five_hour"]` | windows acted on; add `"seven_day"` for the weekly one |
 | `max_attempts` | `2` | sends allowed while each one is rejected again, then `gave-up` |
 | `on_menu` | `"escape"` | the limit menu open: close it once, or `"skip"` |
-| `confirm_secs` | `20` | how long to wait for `working` after Enter before `unconfirmed` |
+| `confirm_secs` | `20` | how long to wait for `working` after Enter before `unconfirmed` (at most 20) |
 
 `thurbox-auto-continue status --json` is the stable shape (`"schema": 1`) for
 scripts and for the interface plugin to come.

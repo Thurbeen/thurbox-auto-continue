@@ -11,11 +11,10 @@ pub struct SessionLock {
 }
 
 impl SessionLock {
-    /// Take the lock for `session`, waiting up to `wait`. `None` means another
+    /// Take the lock for `session` in `dir`, waiting up to `wait`. `None` means another
     /// run holds it; the caller leaves the session to that run.
-    pub fn acquire(home: &Path, session: &str, wait: Duration) -> Result<Option<Self>, String> {
-        let dir = home.join("locks");
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    pub fn acquire(dir: &Path, session: &str, wait: Duration) -> Result<Option<Self>, String> {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let safe: String =
             session.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
         let path = dir.join(format!("{safe}.lock"));

@@ -64,8 +64,11 @@ pub fn classify(text: &str, message: &str) -> Screen {
 
     // Below the composer: Claude's own countdown, when it is armed. The same
     // words stay in the scrollback above after a cancel, so only here counts.
+    // Any one of its words counts, because a narrow pane wraps the line.
     let footer = &lines[at + 2..];
-    if footer.iter().any(|l| l.contains("esc to cancel") && l.contains("Continuing")) {
+    if footer.iter().any(|l| {
+        l.contains("esc to cancel") || l.contains("Continuing automatically") || l.contains("Continuing shortly")
+    }) {
         return Screen::ArmedWait;
     }
     // Just above it: a turn in progress.
@@ -107,6 +110,16 @@ mod tests {
         for (name, want) in cases {
             assert_eq!(classify(&fixture(name), "continue"), want, "{name}");
         }
+    }
+
+    /// A narrow pane wraps Claude's countdown line in two.
+    #[test]
+    fn a_wrapped_countdown_is_still_armed() {
+        let rule = "─".repeat(30);
+        let screen = format!(
+            "{rule}\n❯ \n{rule}\n  ⚠ Usage limit reached\n    Continuing automatically at\n    12:54pm · esc to cancel\n"
+        );
+        assert_eq!(classify(&screen, "continue"), Screen::ArmedWait);
     }
 
     /// A menu that was closed stays in the scrollback above the composer.

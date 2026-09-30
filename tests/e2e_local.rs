@@ -295,4 +295,8 @@ fn the_installer_round_trips() {
     assert!(!sb.home.join(".local/bin/thurbox-auto-continue").exists());
     assert!(stopfailure_hooks(&sb.settings()).iter().all(|c| !c.contains("thurbox-auto-continue")));
     assert_eq!(sb.settings()["hooks"]["Stop"][0]["hooks"][0]["command"], "echo user-stop-hook");
+
+    // A second uninstall, with nothing left to remove, still succeeds.
+    let out = sb.command("sh").args([script, "--uninstall"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }

@@ -19,11 +19,15 @@ command -v thurbox-cli >/dev/null 2>&1 || die "thurbox-cli is not on PATH"
 
 case "${1:-}" in
 --uninstall)
-    if [ -x "$home_dir/bin/$name" ]; then
-        "$home_dir/bin/$name" forget --all --home "$home_dir" || true
+    # Whichever copy is reachable: the one in this home, or the one on PATH.
+    bin="$home_dir/bin/$name"
+    [ -x "$bin" ] || bin="$path_dir/$name"
+    if [ -x "$bin" ]; then
+        "$bin" forget --all --home "$home_dir" >/dev/null || true
     fi
-    thurbox-cli extension uninstall auto-continue --purge >/dev/null
-    [ -L "$path_dir/$name" ] || [ -f "$path_dir/$name" ] && rm -f "$path_dir/$name"
+    # Already gone is fine: the rest still has to be cleaned up.
+    thurbox-cli extension uninstall auto-continue --purge >/dev/null 2>&1 || true
+    rm -f "$path_dir/$name"
     echo "auto-continue removed"
     exit 0
     ;;

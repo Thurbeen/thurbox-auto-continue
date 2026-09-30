@@ -244,3 +244,25 @@ fn a_stale_working_session_without_an_episode_is_untouched() {
     assert_eq!(sb.session_row(&id)["hook_state_at"], before);
     assert!(sb.our_automations().is_empty());
 }
+
+/// Runs started with different `--home` directories still share one lock, so
+/// a late one-shot and an overdue sweep cannot both act on a session.
+#[test]
+fn fires_under_two_homes_still_send_once() {
+    let sb = Sandbox::new();
+    let id = armed(&sb, &["limit:five_hour:1:cancelled", "ok"]);
+    let other = sb.root.join("other-home");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::copy(sb.ext_home.join("config.toml"), other.join("config.toml")).unwrap();
+    let children: Vec<_> = (0..8)
+        .map(|i| {
+            let home = if i % 2 == 0 { &sb.ext_home } else { &other };
+            sb.command(support::BIN).args(["fire", &id, "--home"]).arg(home).spawn().unwrap()
+        })
+        .collect();
+    for mut c in children {
+        assert!(c.wait().unwrap().success());
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(sb.received(&id), ["hello", "continue"]);
+}
