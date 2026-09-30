@@ -296,6 +296,9 @@ H.test("switch reads a session override the way the contract does", function()
   for _, v in ipairs({ "off", "false", "no", "0" }) do
     H.eq(model.switch(v), "off", v)
   end
+  -- The CLI trims before it reads one (src/config.rs, parse_switch).
+  H.eq(model.switch("on "), "on")
+  H.eq(model.switch(" off\t"), "off")
   H.eq(model.switch(nil), nil)
   H.eq(model.switch("maybe"), nil, "an invalid one is ignored, as the CLI ignores it")
 end)

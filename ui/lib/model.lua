@@ -216,7 +216,8 @@ end
 --- A session's `enabled` override as the CLI reads it: `on`, `off`, or nil for
 --- none — including a hand-written value the CLI ignores.
 function model.switch(value)
-  local v = type(value) == "string" and value:lower() or nil
+  -- Trimmed and lowercased, as the CLI's own `parse_switch` reads it.
+  local v = type(value) == "string" and value:match("^%s*(.-)%s*$"):lower() or nil
   if v == "on" or v == "true" or v == "yes" or v == "1" then
     return "on"
   elseif v == "off" or v == "false" or v == "no" or v == "0" then
