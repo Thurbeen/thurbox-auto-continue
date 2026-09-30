@@ -1,0 +1,38 @@
+# The pull request title is the commit a squash merge lands on main, so it is
+# checked on every edit, not only on push.
+name: PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    name: PR Title
+    runs-on: ubuntu-24.04
+    steps:
+      # The title reaches the shell through the environment, never through
+      # `${{ }}` interpolation: it is untrusted text on a public repository.
+      - name: Check the PR title is a conventional commit
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|perf|refactor|docs|style|test|chore|build|ci|revert'
+          if ! printf '%s' "$PR_TITLE" | grep -qE "^($types)(\([a-z0-9-]+\))?!?: [^ .](.*[^.])?$"; then
+            echo "Not a conventional commit title: $PR_TITLE"
+            echo "Expected: <type>[(scope)][!]: <subject>, no trailing period; type one of ${types//|/, }"
+            exit 1
+          fi
+          # Squash merge appends " (#N)" itself.
+          if printf '%s' "$PR_TITLE" | grep -qE '[[:space:]]\(#[0-9]+\)[[:space:]]*$'; then
+            echo "Drop the trailing (#N): squash merge adds it"
+            exit 1
+          fi

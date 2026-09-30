@@ -62,3 +62,21 @@ jobs:
           "$cli" --version
           echo "TAC_THURBOX_CLI=$cli" >> "$GITHUB_ENV"
       - run: cargo test --locked
+
+  # The one check the main-branch ruleset requires, so adding a job here never
+  # means editing the ruleset.
+  all-checks:
+    name: All Checks
+    if: always()
+    needs: [lint, test]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify all checks passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]] || \
+             [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]] || \
+             [[ "${{ contains(needs.*.result, 'skipped') }}" == "true" ]]; then
+            echo "One or more checks failed, were cancelled or skipped"
+            exit 1
+          fi
+          echo "All checks passed"
