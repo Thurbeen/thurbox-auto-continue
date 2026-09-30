@@ -298,12 +298,17 @@ fn hook_shell() -> PathBuf {
     if let Some(p) = std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH").filter(|p| !p.is_empty()) {
         return PathBuf::from(p);
     }
+    // Git for Windows' bash beside the `git.exe` on PATH (`<git>\\cmd`,
+    // `<git>\\bin` or `<git>\\mingw64\\bin`); never a bare `bash.exe` from PATH,
+    // which can be WSL's.
+    on_path("git.exe")
+        .and_then(|git| git.ancestors().skip(1).take(3).map(|d| d.join("bin").join("bash.exe")).find(|b| b.is_file()))
+        .unwrap_or_else(|| PathBuf::from("git-bash-not-found"))
+}
+
+fn on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path)
-        .map(|d| d.join("git.exe"))
-        .find(|p| p.is_file())
-        .and_then(|git| Some(git.parent()?.parent()?.join("bin").join("bash.exe")))
-        .unwrap_or_else(|| PathBuf::from("bash.exe"))
+    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
 }
 
 fn run_hook(cmd: &str, stdin: &str, timeout_secs: u64) -> (i32, usize) {
@@ -421,6 +426,15 @@ fn main() {
         parent: None,
         resume_at: None,
     };
+    // What a hook will see, for a failed test to show.
+    let exe = |n: &str| format!("{n}{}", std::env::consts::EXE_SUFFIX);
+    for name in ["thurbox-cli", "thurbox-auto-continue"] {
+        let found = on_path(&exe(name)).map(|p| p.display().to_string()).unwrap_or_else(|| "-".into());
+        append(&fake.ctl.join("env.log"), &format!("{name}={found}"));
+    }
+    let session = std::env::var("THURBOX_SESSION").unwrap_or_else(|_| "-".into());
+    append(&fake.ctl.join("env.log"), &format!("THURBOX_SESSION={session}"));
+    append(&fake.ctl.join("env.log"), &format!("hook_shell={}", hook_shell().display()));
     fake.hooks("SessionStart", "startup", json!({ "source": "startup" }));
     // Claude asks for bracketed paste; tmux then brackets what is pasted.
     print!("\x1b[?2004h");
@@ -443,7 +457,14 @@ fn main() {
             fake.draw();
         }
         let byte = match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(b) => b,
+            Ok(b) => {
+                // Control bytes as received, so a key that arrives in some
+                // other encoding shows what it was.
+                if b < 0x20 || b == 0x7f {
+                    append(&fake.ctl.join("bytes.log"), &format!("{b:02x}"));
+                }
+                b
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         };

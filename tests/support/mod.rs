@@ -89,9 +89,14 @@ fn find_hook_shell() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH") {
         return Some(PathBuf::from(p));
     }
-    // <git>\cmd\git.exe -> <git>\bin\bash.exe
-    let git = on_path("git.exe")?;
-    git.parent().and_then(Path::parent).map(|g| g.join("bin").join("bash.exe")).filter(|b| b.is_file())
+    git_bash(&on_path("git.exe")?)
+}
+
+/// Git for Windows' own bash, for the `git.exe` found on PATH — which may be
+/// `<git>\\cmd`, `<git>\\bin` or `<git>\\mingw64\\bin` — as `<git>\\bin\\bash.exe`.
+/// Never a bare `bash.exe` from PATH: on Windows that can be WSL's.
+pub fn git_bash(git: &Path) -> Option<PathBuf> {
+    git.ancestors().skip(1).take(3).map(|d| d.join("bin").join("bash.exe")).find(|b| b.is_file())
 }
 
 /// Put `src` at `dst`: a symlink on POSIX, a hard link (or a copy) on Windows,
@@ -285,7 +290,8 @@ impl Sandbox {
 
     /// `thurbox-cli --json <args>`, which must succeed.
     pub fn cli(&self, args: &[&str]) -> Value {
-        let out = self.command(self.bin.join(exe("thurbox-cli"))).arg("--json").args(args).output().unwrap();
+        let mut c = self.command(self.bin.join(exe("thurbox-cli")));
+        let out = output_within(c.arg("--json").args(args), &format!("thurbox-cli {args:?}"));
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(out.status.success(), "thurbox-cli {args:?} failed: {text}");
         serde_json::from_str(text.trim()).unwrap_or(Value::Null)
@@ -293,7 +299,7 @@ impl Sandbox {
 
     /// Our binary, with `--home` pointing at the installed extension home.
     pub fn tac(&self, args: &[&str]) -> Output {
-        self.command(BIN).args(args).arg("--home").arg(&self.ext_home).output().unwrap()
+        output_within(self.command(BIN).args(args).arg("--home").arg(&self.ext_home), &format!("tac {args:?}"))
     }
 
     pub fn config(&self, pairs: &[(&str, &str)]) {
@@ -419,7 +425,7 @@ impl Sandbox {
         for s in self.cli(&["session", "list"]).as_array().cloned().unwrap_or_default() {
             let id = s["id"].as_str().unwrap_or_default();
             eprintln!("--- session {id} hook_state={} ---\n{}", s["hook_state"], self.screen(id));
-            for f in ["received.log", "keys.log", "hooks.log", "script"] {
+            for f in ["received.log", "keys.log", "hooks.log", "env.log", "bytes.log", "script"] {
                 eprintln!("[{f}]\n{}", self.ctl_file(id, f));
             }
             eprintln!("[meta] {}", self.cli(&["session", "meta", "list", id]));
@@ -444,6 +450,52 @@ impl Drop for Sandbox {
             let _ = self.command(mux).args(["-L", &s, "kill-server"]).stderr(Stdio::null()).status();
         }
     }
+}
+
+/// How long one command may take before the test fails instead of hanging.
+const COMMAND_LIMIT: Duration = Duration::from_secs(90);
+
+/// `Command::output`, bounded, and without waiting for its pipes to close: a
+/// multiplexer server the command started can inherit them and hold them open
+/// for as long as it lives (psmux does, on Windows). The output is what the
+/// command wrote before it exited.
+pub fn output_within(c: &mut Command, what: &str) -> Output {
+    use std::io::Read;
+    let mut child = c.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let drain = |mut r: Box<dyn Read + Send>| {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            while let Ok(n) = r.read(&mut buf) {
+                if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    };
+    let out_rx = drain(Box::new(child.stdout.take().unwrap()));
+    let err_rx = drain(Box::new(child.stderr.take().unwrap()));
+    let end = Instant::now() + COMMAND_LIMIT;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= end {
+            let _ = child.kill();
+            panic!("{what} still running after {COMMAND_LIMIT:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    // What was written before the exit is in the pipe already.
+    let collect = |rx: std::sync::mpsc::Receiver<Vec<u8>>| {
+        let mut v = Vec::new();
+        while let Ok(chunk) = rx.recv_timeout(Duration::from_millis(200)) {
+            v.extend(chunk);
+        }
+        v
+    };
+    Output { status, stdout: collect(out_rx), stderr: collect(err_rx) }
 }
 
 /// Our hook command, exactly as install merged it into settings.json.

@@ -287,7 +287,10 @@ fn the_sweep_recovers_an_episode_the_hook_missed() {
 fn the_installer_round_trips() {
     let sb = Sandbox::bare();
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/install.sh");
-    let out = sb.command(support::hook_shell()).args([script, "--binary", support::BIN]).output().unwrap();
+    let out = support::output_within(
+        sb.command(support::hook_shell()).args([script, "--binary", support::BIN]),
+        "install.sh",
+    );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(sb.active("auto-continue"));
     assert!(sb.home.join(".local/bin").join(support::exe("thurbox-auto-continue")).exists());
@@ -297,7 +300,10 @@ fn the_installer_round_trips() {
     let sweep = sb.cli(&["automation", "list"]).as_array().unwrap().iter().any(|a| a["name"] == "auto-continue-sweep");
     assert!(sweep, "the fallback sweep is scheduled");
 
-    let out = sb.command(support::hook_shell()).args([script, "--uninstall"]).output().unwrap();
+    let out = support::output_within(
+        sb.command(support::hook_shell()).args([script, "--uninstall"]),
+        "install.sh --uninstall",
+    );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!sb.cli(&["extension", "list"]).as_array().unwrap().iter().any(|e| e["name"] == "auto-continue"));
     assert!(!sb.home.join(".local/bin").join(support::exe("thurbox-auto-continue")).exists());
@@ -305,6 +311,9 @@ fn the_installer_round_trips() {
     assert_eq!(sb.settings()["hooks"]["Stop"][0]["hooks"][0]["command"], "echo user-stop-hook");
 
     // A second uninstall, with nothing left to remove, still succeeds.
-    let out = sb.command(support::hook_shell()).args([script, "--uninstall"]).output().unwrap();
+    let out = support::output_within(
+        sb.command(support::hook_shell()).args([script, "--uninstall"]),
+        "install.sh --uninstall",
+    );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }

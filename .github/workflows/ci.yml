@@ -72,6 +72,7 @@ jobs:
       matrix:
         thurbox: [v2.36.2, latest]
     runs-on: windows-2025
+    timeout-minutes: 45
     env:
       # psmux publishes no checksums file, so the zip's digest is pinned here.
       PSMUX_VERSION: v3.3.8

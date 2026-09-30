@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use support::Sandbox;
+use thurbox_auto_continue::platform;
 use thurbox_auto_continue::screen::{Screen, classify};
 
 /// Thurbox's own keeper — a `while` loop in its heartbeat window, PowerShell
@@ -67,7 +68,41 @@ fn the_manifest_sweep_runs_under_the_platform_shell() {
         !runs(&sb, &sweep_id).is_empty()
     });
     let run = runs(&sb, &sweep_id).remove(0);
-    assert_eq!(run["status"], "success", "{}: {run}", sweep["command"]);
+    assert_eq!(run["status"], "success", "{}: {run}", sweep["action"]["command"]);
+}
+
+/// Every Exec automation runs its command as `sh -c <command>`, or on Windows
+/// `cmd /C <command>`. The one-shot names our binary and the extension home by
+/// path, quoted by `platform::shell_quote`; a path with a space in it — a
+/// Windows profile like `C:\Users\First Last` — has to come through whole.
+#[test]
+fn an_exec_command_quoted_for_the_platform_shell_runs() {
+    let sb = Sandbox::new();
+    let spaced = sb.root.join("a dir with spaces");
+    std::fs::create_dir_all(&spaced).unwrap();
+    let spaced_bin = spaced.join(support::exe("thurbox-auto-continue"));
+    support::link(std::path::Path::new(support::BIN), &spaced_bin);
+    let q = |p: &std::path::Path| platform::shell_quote(&p.display().to_string());
+    let cases = [
+        ("plain", format!("{} config show --home {}", q(std::path::Path::new(support::BIN)), q(&sb.ext_home))),
+        ("spaced binary", format!("{} config show --home {}", q(&spaced_bin), q(&sb.ext_home))),
+        ("spaced home", format!("{} config show --home {}", q(std::path::Path::new(support::BIN)), q(&spaced))),
+        ("both spaced", format!("{} config show --home {}", q(&spaced_bin), q(&spaced))),
+    ];
+    let mut outcomes = Vec::new();
+    for (what, command) in &cases {
+        let v = sb.cli(&["automation", "create", "--name", what, "--trigger", "cron:0 0 1 1 *", "--command", command]);
+        let id = v["id"].as_i64().unwrap().to_string();
+        sb.cli(&["automation", "run", &id]);
+        sb.wait("the automation to run", Duration::from_secs(30), || {
+            sb.tick();
+            !runs(&sb, &id).is_empty()
+        });
+        let run = runs(&sb, &id).remove(0);
+        outcomes.push(format!("{what}: {} {} <- {command}", run["status"], run["detail"]));
+    }
+    let failed: Vec<_> = outcomes.iter().filter(|o| !o.contains("\"success\"")).collect();
+    assert!(failed.is_empty(), "{outcomes:#?}");
 }
 
 fn runs(sb: &Sandbox, id: &str) -> Vec<Value> {
