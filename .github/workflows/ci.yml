@@ -21,12 +21,18 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: stylua@2.5.2
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: shellcheck install.sh
+      - run: shellcheck install.sh demo/*.sh tests/ui/run.sh
+      - run: stylua --check ui tests/ui
 
   # The end-to-end suite drives a real, sandboxed thurbox-cli and tmux server:
   # against the oldest Thurbox the manifest declares, and the latest release.
+  # The plugin's suites run in it too, under Lua 5.4 — the kernel's own — with
+  # the lib/ of the thurbox-cli being tested (tests/ui/run.sh).
   test:
     strategy:
       fail-fast: false
@@ -38,9 +44,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Install tmux
+      - name: Install tmux and Lua 5.4
         run: |
-          if [ "$RUNNER_OS" = macOS ]; then brew install tmux; else sudo apt-get update -q && sudo apt-get install -yq tmux; fi
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install tmux lua@5.4
+            echo "TAC_LUA=$(brew --prefix lua@5.4)/bin/lua" >> "$GITHUB_ENV"
+          else
+            sudo apt-get update -q && sudo apt-get install -yq tmux lua5.4
+            echo "TAC_LUA=$(command -v lua5.4)" >> "$GITHUB_ENV"
+          fi
           tmux -V
       - name: Download thurbox ${{ matrix.thurbox }}
         env:

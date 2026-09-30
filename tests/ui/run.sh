@@ -30,24 +30,28 @@ version=$("$cli" --version | awk '{print $2}')
 target="${CARGO_TARGET_DIR:-$repo/target}/ui-tests"
 stock="$target/stock-$version"
 if [ ! -f "$stock/ui/lib/widgets.lua" ]; then
-    rm -rf "$stock"
-    mkdir -p "$stock/ui" "$stock/home"
+    # Seeded beside it and renamed into place, so suites started together
+    # never read a half-written copy.
+    mkdir -p "$target"
+    seed=$(mktemp -d "$target/seed.XXXXXX")
+    mkdir -p "$seed/ui" "$seed/home"
     # Its own HOME and config, so the seeding reads and writes nothing real.
     env -u THURBOX_CONFIG_DIR -u THURBOX_DATA_DIR \
-        HOME="$stock/home" XDG_CONFIG_HOME="$stock/home/.config" XDG_DATA_HOME="$stock/home/.local/share" \
-        THURBOX_UI_DIR="$stock/ui" "$cli" plugin new seed --text >/dev/null
-    rm -f "$stock"/ui/plugins/*_seed.lua
+        HOME="$seed/home" XDG_CONFIG_HOME="$seed/home/.config" XDG_DATA_HOME="$seed/home/.local/share" \
+        THURBOX_UI_DIR="$seed/ui" "$cli" plugin new seed --text >/dev/null
+    rm -f "$seed"/ui/plugins/*_seed.lua
+    # Whoever finished first keeps theirs (`mv` onto a directory would nest).
+    if [ -e "$stock" ]; then rm -rf "$seed"; else mv "$seed" "$stock" || rm -rf "$seed"; fi
 fi
-
-scratch="$target/scratch"
-rm -rf "$scratch"
-mkdir -p "$scratch"
 
 status=0
 for suite in ${1:-model pane badge}; do
     echo "== $suite (thurbox $version)"
+    scratch="$target/scratch-$suite"
+    rm -rf "$scratch"
+    mkdir -p "$scratch"
     HERE="$here" UI="$stock/ui" PLUGIN_ROOT="$repo" SCRATCH="$scratch" \
         "$lua" "$here/test_$suite.lua" || status=1
+    rm -rf "$scratch"
 done
-rm -rf "$scratch"
 exit "$status"

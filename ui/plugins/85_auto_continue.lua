@@ -754,7 +754,7 @@ local function hints(target, status)
     return "j/k move · e on/off · m message · d delay · r refresh · F11 back"
   end
   if model.controllable(status.rows[target]) then
-    return "j/k move · e on/off/inherit · m message · d delay · M/D back to global · r refresh"
+    return "j/k move · e on/off/inherit · m message · d delay · M/D reset · r refresh"
   end
   return "j/k move · r refresh"
 end

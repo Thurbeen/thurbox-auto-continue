@@ -9,6 +9,15 @@ is made by one small deterministic binary.
 
 It is **off by default**, globally and for every session.
 
+A [Thurbox TUI plugin](#in-the-thurbox-tui) shows and changes all of it from
+the interface: a settings and monitor pane, a badge on each Claude session's
+row, and the global switch in Thurbox's Settings panel.
+
+![The Thurbox TUI with the auto-continue pane open beside the session list. Auto-continue starts off for every session; F11 opens the pane, the parser session is switched on and given its own message and a 5 second delay. A fake usage limit arms an episode: the row shows the five-hour window resetting and the send counting down, and the session list's badge counts down with it. At the reset the headless extension types "carry on with the parser" into the fake Claude, and the badge turns into a check mark.](media/demo.gif)
+
+The recording is the real TUI with a fake Claude in a throwaway sandbox (no
+account, no real sessions); [demo/record.sh](demo/record.sh) makes it again.
+
 ## How it works
 
 ```text
@@ -137,6 +146,142 @@ send; a changed delay applies from the next limit.
 | `on_menu` | `"escape"` | no | the limit menu open: close it once, or `"skip"` |
 | `confirm_secs` | `20` | no | how long to wait for `working` after Enter before `unconfirmed` (at most 20) |
 
+## In the Thurbox TUI
+
+`ui/` is a Thurbox interface plugin, two files installed from this repository:
+
+| file | what it is |
+|---|---|
+| `ui/plugins/85_auto_continue.lua` | **the pane**: every Claude session's state, and the settings of the global switch and of each session, with an editor. Beside the agent pane; **F11** (or the **Auto-continue** pill in the action band, or `Ctrl+P`) opens it and leaves it |
+| `ui/plugins/86_auto_continue_badge.lua` | **the badge**: a mark at the right edge of each Claude session's row in the session list |
+
+Install both, after the extension itself:
+
+```sh
+thurbox-cli plugin install git+https://github.com/Thurbeen/thurbox-auto-continue --as ui/plugins/85_auto_continue.lua
+thurbox-cli plugin install git+https://github.com/Thurbeen/thurbox-auto-continue --as ui/plugins/86_auto_continue_badge.lua
+thurbox-cli plugin check          # both load: auto-continue, auto-continue-badge
+```
+
+That clones this repository into your interface directory
+(`thurbox-cli plugin dir`), executables included — nothing in it runs until you
+say so. The pane needs no `layout.lua` edit: it is an alternate of the `center`
+slot, like the Shell tab.
+
+**Grant it once.** Both files read and change settings by running
+`thurbox-auto-continue`, so each needs Thurbox's `run` capability, which only
+you can grant: `Ctrl+,` (or `F6`) → `]` → select
+`thurbox-auto-continue/ui/plugins/85_auto_continue.lua` → `t`, then the same for
+`86_auto_continue_badge.lua`. Until then the pane says exactly that and runs
+nothing, and the session list carries no badge. The plugin never grants itself
+anything and never edits `ui.json`.
+
+The pane, as the recording above captured it (the empty rows trimmed):
+
+```text
+┏ ▸ Auto-continue ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ extension active                                                               ┃
+┃── Sessions ────────────────────────────────────────────────────────────────────┃
+┃   Every Claude session  config.toml  off (default) · 1 of 2 Claude sessions on ┃
+┃ ▸ parser             on  armed · five_hour resets in 12s · send in 17s         ┃
+┃   docs               off no limit yet                                          ┃
+┃   review             —   not a Claude session                                  ┃
+┃                                                                                ┃
+┃── parser ──────────────────────────────────────────────────────────────────────┃
+┃   enabled    on   session  (global off)                                        ┃
+┃   message    carry on with the parser   session                                ┃
+┃   delay      5 s   session                                                     ┃
+┃   window     five_hour · resets in 12s                                         ┃
+┃   next send  in 17s   attempt 1 of 2                                           ┃
+┃   last       none yet — this episode is still open                             ┃
+┃ ✓ saved parser delay                                                           ┃
+┃                                                                                ┃
+┃ j/k move · e on/off/inherit · m message · d delay · M/D reset · r refresh      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```
+
+| key | on the global row | on a Claude session |
+|---|---|---|
+| `j` / `k` | move | move |
+| `e` | switch on / off (config.toml) | cycle: global → on → off → global |
+| `m` | edit the message | edit the session's message |
+| `d` | edit the delay | edit the session's delay |
+| `M` / `D` | — | the message / the delay back to the global value |
+| `r` | read everything again | read everything again |
+
+A field opens empty with the current value as its placeholder; `enter` saves,
+`esc` cancels. A message must be one line of 1–200 characters not starting
+with `/`, `!` or `#`, a delay 0–86400 seconds: anything else is refused in the
+pane before anything runs, and the CLI checks again — its refusal is shown in
+the pane as `✗` with its reason. A session that is not Claude's, or one on a
+host that cannot be asked, has no controls at all.
+
+What the monitor tells apart: status still being read (`reading status…`), the
+binary missing on this machine, the extension switched off (`nothing is
+sent`), a session with no limit yet (`no limit yet`), and a session the last
+status did not cover. An episode shows its window and reset, the next send
+with a countdown (`due on the next heartbeat` once it is late), the attempt,
+and how it ended — `sent`, `sent, not confirmed`, `skipped` with its reason,
+`gave up` — with **superseded** when you, Claude's own resume or a restart
+moved the session on first.
+
+The badge:
+
+| mark | means |
+|---|---|
+| `↻` | on, no limit yet |
+| `⏸ 42m` / `⏸ due` | armed: the send in 42 minutes / at the next heartbeat |
+| `…` | sending now |
+| `✓` · `?` | sent · sent, not confirmed |
+| `↷` · `⊘` | superseded · skipped for another reason |
+| `✗` | gave up, or abandoned |
+
+Nothing for a session that is off with no episode, one that is not Claude's, or
+one on a host that cannot be asked.
+
+How it works, briefly:
+
+- **One source of truth.** The pane keeps no settings of its own. It reads
+  `status --json` and `config show --json` and writes with `config set|unset`
+  ([docs/CLI-CONTRACT.md](docs/CLI-CONTRACT.md)), through Thurbox's `run`, so a
+  change from the pane, from a shell or from a script is the same change. The
+  prompt text is shown only in the settings editor, from `config show`; the
+  monitor never shows it, and nothing from a transcript is ever read.
+- **Where it runs.** Thurbox runs a plugin's program in a session's directory,
+  on that session's machine. The pane runs the CLI in a local session, and the
+  CLI reaches a shared host itself (see [Shared hosts](#shared-hosts)): a
+  remote session's switch lands in that host's database, and a host that cannot
+  be asked is shown as `unavailable` with the reason. With no local session at
+  all, a remote session is asked on its own host.
+- **The Settings switch.** The pane declares one Thurbox setting,
+  `auto-continue.enabled` (Settings panel, off by default), as the face of
+  config.toml's global `enabled`, which is what the headless extension reads.
+  The two are kept in step from event handlers and key presses — never from the
+  render loop — by the pane's one `run` grant: flip the switch and the next
+  interface event (a selection or focus change) writes `config set enabled`;
+  change config.toml from a shell and the switch follows. When both changed,
+  config.toml wins. Until then the pane says `Settings switch: on · config.toml:
+  off`. Turning the global switch with `e` in the pane sets both at once.
+- **Cost.** The pane and the badge each read `status --json` at most every 10
+  seconds while they are drawn, and the pane re-reads right after a change.
+  With shared hosts, one status is one `ssh` per host.
+
+Not there yet:
+
+- **The right-click session menu.** Thurbox's session list builds that menu
+  from a fixed table in its own `ui/plugins/10_sessions.lua`, which no plugin
+  can add to. The plugin's `auto-continue.toggle_selected` action (in the
+  `Ctrl+P` palette, and bindable from `F1`) is what such an entry would run; it
+  needs a change to Thurbox's bundled session list first.
+- **A state in the pill.** The action band's pills carry fixed labels, so the
+  pill opens the pane rather than showing the selected session's state; the
+  badge does that.
+
+Remove it: `thurbox-cli plugin remove thurbox-auto-continue/ui/plugins/85_auto_continue.lua`
+and the same for `86_auto_continue_badge.lua`. That leaves your settings in
+config.toml and the session meta, where the headless extension keeps using
+them; [uninstalling the extension](#stop-it-remove-it) removes those.
+
 ## Shared hosts
 
 A session on an SSH host or WSL distro is looked after by the extension
@@ -173,7 +318,8 @@ shared host is reached. It carries no transcript text.
   brings it back.
 - **Off everywhere:** `thurbox-auto-continue config set enabled off` (sessions
   you enabled one by one stay on until you `disable` or `clear` them).
-- **Uninstall:** `./install.sh --uninstall`. It runs `thurbox-auto-continue
+- **Uninstall:** remove the [TUI plugin](#in-the-thurbox-tui) first if you
+  installed it, then `./install.sh --uninstall`. It runs `thurbox-auto-continue
   forget --all` (every per-session setting, episode and pending send), then
   `thurbox-cli extension uninstall auto-continue --purge`, which takes our hook
   out of `~/.claude/settings.json` and leaves your own entries there. A send
@@ -198,7 +344,7 @@ shared host is reached. It carries no transcript text.
 | SSH / WSL shared hosts | supported, host-local (install on each host). The end-to-end suite runs a second real Thurbox as the host, reached through a stand-in `ssh` and `wsl.exe`; **not yet verified against a real remote machine or a real WSL distro** |
 | hosts with `share_sessions = false`, legacy and psmux hosts | **unsupported**: reported by `status` and refused by the setters, never sent |
 | native Windows (psmux) | **unverified**: the Windows paths exist (`src/platform.rs`) but have never run |
-| Thurbox TUI plugin | **not yet**: a separate plugin, built on [docs/CLI-CONTRACT.md](docs/CLI-CONTRACT.md) |
+| Thurbox TUI plugin | Thurbox 2.36.2 and the latest release: its Lua suites run against each one's own `lib/`, and the end-to-end suite installs it with `plugin install` and drives it against the real CLI, on Linux and macOS |
 
 ## Limitations
 
@@ -231,11 +377,12 @@ shared host is reached. It carries no transcript text.
 ## Development
 
 ```sh
-cargo test          # unit tests, and the end-to-end suite against a real thurbox-cli
+cargo test          # unit tests, the plugin's Lua suites, and the end-to-end suite against a real thurbox-cli
+tests/ui/run.sh     # the plugin's Lua suites alone: model, pane, badge
 ```
 
-The end-to-end tests need `tmux` and a `thurbox-cli` (on `PATH`, or named by
-`TAC_THURBOX_CLI`). Each test gets its own sandbox under `target/tmp/`:
+The end-to-end tests need `tmux`, Lua 5.4 (`lua5.4` on PATH, or named by
+`TAC_LUA`) and a `thurbox-cli` (on `PATH`, or named by `TAC_THURBOX_CLI`). Each test gets its own sandbox under `target/tmp/`:
 `HOME`, `THURBOX_CONFIG_DIR` and `THURBOX_DATA_DIR` point into it, it gets its
 own tmux server, and the Thurbox TUI is never started. `claude` is replaced by
 `examples/fake_claude.rs`, which draws Claude 2.1.285's screens, writes its
@@ -247,3 +394,31 @@ host, each with its own database, tmux server and install. The laptop reaches
 the host through a stand-in `ssh` or `wsl.exe` on its PATH that runs the
 command under the host sandbox's environment, so Thurbox's real delegation,
 mirror and `session exec` paths run and only the network is faked.
+
+The plugin is tested three ways, none of which needs a terminal:
+
+- `tests/ui/test_*.lua` load thurbox's own `lib/` — the one the `thurbox-cli`
+  under test ships, seeded with `plugin new` — and render the pane, the badge
+  and Thurbox's real session list against fake CLI answers
+  (`tests/ui/fixtures/`, in the contract's shapes). The harness withholds what
+  the kernel withholds (`os`, `io`, an untrusted `run`), records any write a
+  render makes, and routes a chord Thurbox's own panes bind globally away from
+  the pane, as the kernel does.
+- `tests/e2e_ui.rs` installs the plugin with `thurbox-cli plugin install` into
+  a disposable `THURBOX_UI_DIR`, checks it with `plugin check`, and drives the
+  installed pane through `tests/ui/live.lua`, its `run` executed for real
+  against the sandbox's Thurbox, a shared host and this crate's binary:
+  configure, validate, a limit episode sent by the heartbeat with no TUI, the
+  Settings mirror, and uninstall.
+- `demo/record.sh` records `media/demo.gif` in the real TUI:
+
+  ```sh
+  demo/record.sh                   # needs asciinema, agg, tmux, python3, sqlite3, cargo
+  THURBOX=… THURBOX_CLI=… demo/record.sh   # another thurbox than the one on PATH
+  demo/sandbox.sh                  # the sandbox alone; its enter.sh opens a shell in it
+  ```
+
+  It builds its sandbox under `~/.cache/thurbox-auto-continue-demo`, installs
+  both halves the way this README does, presses the one-time grant in
+  Settings → Interface off camera, and refuses to render a recording that
+  contains the recording machine's user name, host name or home path.
