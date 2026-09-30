@@ -124,10 +124,18 @@ impl Thurbox {
         Ok(v.as_array().map(|a| a.iter().filter_map(Session::from_json).collect()).unwrap_or_default())
     }
 
-    /// One session, or `None` when it does not exist.
+    /// One session, or `None` when no session (or more than one) matches.
     pub fn session(&self, id: &str) -> Result<Option<Session>, String> {
+        // As thurbox-cli takes a reference: the id, the name, or a unique id prefix.
         let all = self.sessions()?;
-        Ok(all.into_iter().find(|s| s.id == id || s.name == id))
+        if let Some(s) = all.iter().find(|s| s.id == id || s.name == id) {
+            return Ok(Some(s.clone()));
+        }
+        let mut prefixed = all.into_iter().filter(|s| !id.is_empty() && s.id.starts_with(id));
+        Ok(match (prefixed.next(), prefixed.next()) {
+            (Some(s), None) => Some(s),
+            _ => None,
+        })
     }
 
     pub fn meta_get(&self, id: &str, key: &str) -> Result<Option<String>, String> {

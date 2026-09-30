@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
-use thurbox_auto_continue::config::{self, Config, SESSION_SETTINGS};
+use thurbox_auto_continue::config::{self, Config, GLOBAL_KEYS, SESSION_SETTINGS};
 use thurbox_auto_continue::episode::{AUTOMATION_PREFIX, EPISODE_KEY, Episode, State};
 use thurbox_auto_continue::thurbox::{Session, Thurbox};
 use thurbox_auto_continue::{engine, platform};
@@ -94,8 +94,31 @@ enum ConfigCmd {
     },
 }
 
+/// Why a setter did not run: the command was wrong (exit 2), or it was
+/// refused (exit 1).
+enum Fail {
+    Usage(String),
+    Refused(String),
+}
+
+impl From<String> for Fail {
+    fn from(e: String) -> Self {
+        Fail::Refused(e)
+    }
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) if e.use_stderr() && std::env::args().any(|a| a == "--json") => {
+            // A plugin reads stdout: it gets one object even when the command
+            // line itself was wrong.
+            let first = e.to_string().lines().next().unwrap_or_default().trim_start_matches("error: ").to_string();
+            println!("{}", json!({ "ok": false, "error": first }));
+            return ExitCode::from(2);
+        }
+        Err(e) => e.exit(),
+    };
     let Some(home) = cli.home.clone().or_else(platform::default_home) else {
         eprintln!("error: no home directory; pass --home or set {}", platform::HOME_ENV);
         return ExitCode::from(2);
@@ -117,9 +140,9 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Cmd::Status { session, json } => status(&home, session.as_deref(), json),
-        Cmd::Enable { session } => set(&home, "enabled", Some("on"), Some(&session), false),
-        Cmd::Disable { session } => set(&home, "enabled", Some("off"), Some(&session), false),
-        Cmd::Clear { session } => set(&home, "enabled", None, Some(&session), false),
+        Cmd::Enable { session } => return report(set(&home, "enabled", Some("on"), Some(&session), false), false),
+        Cmd::Disable { session } => return report(set(&home, "enabled", Some("off"), Some(&session), false), false),
+        Cmd::Clear { session } => return report(set(&home, "enabled", None, Some(&session), false), false),
         Cmd::Config { action: ConfigCmd::Show { session, json } } => show(&home, session.as_deref(), json),
         Cmd::Config { action: ConfigCmd::Set { key, value, session, json } } => {
             return report(set(&home, &key, Some(&value), session.as_deref(), json), json);
@@ -127,7 +150,9 @@ fn main() -> ExitCode {
         Cmd::Config { action: ConfigCmd::Unset { key, session, json } } => {
             let r = match session.as_deref() {
                 Some(s) => set(&home, &key, None, Some(s), json),
-                None => Err(format!("`unset` needs --session: a global `{key}` is changed with `config set`")),
+                None => {
+                    Err(Fail::Usage(format!("`unset` needs --session: a global `{key}` is changed with `config set`")))
+                }
             };
             return report(r, json);
         }
@@ -148,31 +173,29 @@ fn find(tb: &Thurbox, reference: &str) -> Result<Session, String> {
 
 /// Exit code and output for a setter: with `--json`, one object on stdout
 /// whether it worked or not.
-fn report(result: Result<(), String>, json: bool) -> ExitCode {
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            if json {
-                println!("{}", json!({ "ok": false, "error": e }));
-            } else {
-                eprintln!("error: {e}");
-            }
-            ExitCode::from(1)
-        }
+fn report(result: Result<(), Fail>, json: bool) -> ExitCode {
+    let (code, e) = match result {
+        Ok(()) => return ExitCode::SUCCESS,
+        Err(Fail::Usage(e)) => (2, e),
+        Err(Fail::Refused(e)) => (1, e),
+    };
+    if json {
+        println!("{}", json!({ "ok": false, "error": e }));
+    } else {
+        eprintln!("error: {e}");
     }
+    ExitCode::from(code)
 }
 
 /// Set (`value` Some) or clear (`None`) one setting, globally or for a session.
-fn set(
-    home: &std::path::Path,
-    key: &str,
-    value: Option<&str>,
-    session: Option<&str>,
-    json: bool,
-) -> Result<(), String> {
+fn set(home: &std::path::Path, key: &str, value: Option<&str>, session: Option<&str>, json: bool) -> Result<(), Fail> {
+    if !GLOBAL_KEYS.contains(&key) {
+        return Err(Fail::Usage(format!("unknown key `{key}`; one of: {}", GLOBAL_KEYS.join(", "))));
+    }
     let Some(reference) = session else {
-        let value = value.ok_or("a global setting is changed with `config set`")?;
-        let mut cfg = Config::load(home)?;
+        let value = value.ok_or_else(|| Fail::Usage("a global setting is changed with `config set`".into()))?;
+        // Lenient: the value being set may be what fixes a broken file.
+        let (mut cfg, _) = Config::load_lenient(home)?;
         cfg.set(key, value)?;
         cfg.save(home)?;
         let stored = toml::Table::try_from(&cfg).ok().and_then(|t| t.get(key).cloned());
@@ -184,7 +207,7 @@ fn set(
         return Ok(());
     };
     let Some(&(_, meta_key)) = SESSION_SETTINGS.iter().find(|(k, _)| *k == key) else {
-        return Err(format!("`{key}` is global only; per session: enabled, message, delay_secs"));
+        return Err(Fail::Usage(format!("`{key}` is global only; per session: enabled, message, delay_secs")));
     };
     let stored = match value {
         Some(v) => Some(match key {
@@ -198,13 +221,14 @@ fn set(
     let s = find(&tb, reference)?;
     if key == "enabled" && stored.as_deref() == Some("on") {
         if !s.is_claude() {
-            return Err(format!("`{}` runs `{}`; auto-continue only acts on Claude sessions", s.name, s.agent));
+            return Err(format!("`{}` runs `{}`; auto-continue only acts on Claude sessions", s.name, s.agent).into());
         }
         if !s.is_local() {
             return Err(format!(
                 "`{}` lives on `{}`; install the extension on that host and set it there",
                 s.name, s.backend_type
-            ));
+            )
+            .into());
         }
     }
     match &stored {
@@ -223,7 +247,7 @@ fn set(
 }
 
 fn show(home: &std::path::Path, session: Option<&str>, json: bool) -> Result<(), String> {
-    let cfg = Config::load(home)?;
+    let (cfg, global_warnings) = Config::load_lenient(home)?;
     let effective = match session {
         Some(r) => {
             let tb = Thurbox::default();
@@ -241,7 +265,7 @@ fn show(home: &std::path::Path, session: Option<&str>, json: bool) -> Result<(),
         println!("enabled    = {:<8} ({})", effective.enabled.value, src(effective.enabled.source));
         println!("message    = {:?} ({})", effective.message.value, src(effective.message.source));
         println!("delay_secs = {:<8} ({})", effective.delay_secs.value, src(effective.delay_secs.source));
-        for w in &effective.warnings {
+        for w in global_warnings.iter().chain(&effective.warnings) {
             println!("warning: {w}");
         }
     }
@@ -263,7 +287,7 @@ fn ineligible(s: &Session) -> Option<&'static str> {
 /// The shape `status --json` prints (docs/CLI-CONTRACT.md). `schema` is
 /// bumped on any breaking change, because the interface plugin reads it.
 fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(), String> {
-    let cfg = Config::load(home)?;
+    let (cfg, global_warnings) = Config::load_lenient(home)?;
     let tb = Thurbox::default();
     let mut sessions = tb.sessions()?;
     if let Some(r) = only {
@@ -273,8 +297,13 @@ fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(
     let rows: Vec<Value> = sessions
         .iter()
         .map(|s| {
-            let meta = tb.meta_list(&s.id).unwrap_or_default();
-            let settings = cfg.for_session(&meta);
+            // Unreadable meta is shown as off, as the engine treats it.
+            let (meta, meta_error) = match tb.meta_list(&s.id) {
+                Ok(m) => (m, None),
+                Err(e) => (Default::default(), Some(format!("session settings unreadable: {e}"))),
+            };
+            let mut settings = cfg.for_session(&meta);
+            settings.warnings.extend(meta_error.clone());
             let overrides: serde_json::Map<String, Value> = SESSION_SETTINGS
                 .iter()
                 .map(|(k, mk)| (k.to_string(), meta.get(*mk).cloned().unwrap_or(Value::Null)))
@@ -287,7 +316,7 @@ fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(
                 "agent": s.agent,
                 "eligible": why.is_none(),
                 "ineligible_reason": why,
-                "enabled": why.is_none() && settings.enabled.value,
+                "enabled": why.is_none() && meta_error.is_none() && settings.enabled.value,
                 "settings": settings,
                 "overrides": overrides,
                 "episode": episode.as_ref().map(|e| json!({
@@ -323,11 +352,15 @@ fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(
             "windows": cfg.windows,
             "max_attempts": cfg.max_attempts,
         },
+        "warnings": global_warnings,
         "sessions": rows,
     });
     if as_json {
         println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
         return Ok(());
+    }
+    for w in &global_warnings {
+        println!("warning: {w}");
     }
     println!(
         "global: {}  (delay {}s, message {:?}, windows {})",

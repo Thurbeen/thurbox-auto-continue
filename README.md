@@ -100,8 +100,8 @@ thurbox-auto-continue config unset message --session <session>   # back to the g
 thurbox-auto-continue config show --session <session>            # what applies, and where it comes from
 ```
 
-A message must be one line of 1–500 characters and must not start with `/` or
-`!` (those run a Claude command or a shell). `delay_secs` is 0–86400. A
+A message must be one line of 1–200 characters and must not start with `/`,
+`!` or `#` (Claude reads those as a command, a shell or a memory). `delay_secs` is 0–86400. A
 message or switch changed after a limit is recorded still applies to that
 send; a changed delay applies from the next limit.
 

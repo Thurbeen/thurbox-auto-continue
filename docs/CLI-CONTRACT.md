@@ -19,14 +19,17 @@ match wins:
 | setting | session meta key | global | default | valid values |
 |---|---|---|---|---|
 | `enabled` | `auto-continue.enabled` | yes | `false` | `on` / `off` (also `true`/`false`, `yes`/`no`, `1`/`0`) |
-| `message` | `auto-continue.message` | yes | `continue` | one line, 1–500 characters, no control characters, not starting with `/` or `!` (those run a Claude command or a shell) |
+| `message` | `auto-continue.message` | yes | `continue` | one line, 1–200 characters, no control characters, not starting with `/`, `!` or `#` (Claude reads those as a command, a shell or a memory) |
 | `delay_secs` | `auto-continue.delay_secs` | yes | `300` | whole seconds, `0`–`86400` |
 
 Global only, never per session: `windows`, `max_attempts`, `on_menu`,
 `confirm_secs`.
 
 A session override that fails validation (someone wrote the meta key by hand)
-is ignored: the next level applies and `status` lists it under `warnings`.
+is ignored: the next level applies and `status` lists it under that session's
+`warnings`. A `config.toml` value that fails validation is listed under the
+top-level `warnings`, and **nothing is sent** until it is fixed; `config set`
+and `status` keep working so it can be.
 
 When a change takes effect:
 
@@ -52,8 +55,11 @@ it removes the override so the global value applies again.
 `enable <ref>`, `disable <ref>` and `clear <ref>` stay as shortcuts for
 `config set enabled on|off --session <ref>` and `config unset enabled --session <ref>`.
 
-Exit codes: `0` done, `1` refused (validation, unknown session, not eligible),
-`2` usage. With `--json`, stdout is one object either way:
+Exit codes: `0` done; `1` refused (a value that fails validation, an unknown
+or ambiguous session, `enabled on` for a session that is not eligible); `2`
+usage (an unknown key, a global-only key with `--session`, `unset` without
+`--session`, a malformed command line). With `--json`, stdout is one object
+in every case, including a command line clap rejects:
 
 ```json
 {"ok": true, "scope": "session", "session": "<id>", "key": "message", "value": "keep going"}
@@ -79,6 +85,7 @@ that one session.
     "windows": ["five_hour"],
     "max_attempts": 2
   },
+  "warnings": [],
   "sessions": [
     {
       "id": "…", "name": "worker", "agent": "claude",
@@ -104,8 +111,11 @@ that one session.
 }
 ```
 
+- `extension_active` is `true`, `false`, or `null` when `thurbox-cli` did not
+  answer. Only `true` sends.
 - `source` is `session`, `global` or `default`.
-- `enabled` is the effective switch: `false` whenever `eligible` is false.
+- `enabled` is the effective switch: `false` whenever `eligible` is false, and
+  when the session's own settings could not be read (a warning then says so).
 - `ineligible_reason`: `not-claude`, `remote` or `stopped`.
 - `episode` is the latest limit episode, or `null`. `state` is one of `armed`,
   `claimed`, `sent`, `unconfirmed`, `skipped`, `gave-up`, `abandoned`; `reason`

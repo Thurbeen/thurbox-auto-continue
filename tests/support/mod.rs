@@ -119,7 +119,13 @@ impl Sandbox {
     pub fn install(&self) {
         let src = Path::new(env!("CARGO_MANIFEST_DIR"));
         self.cli(&["extension", "install", src.to_str().unwrap()]);
-        assert!(self.active("auto-continue"), "install left the extension inactive");
+        // As install.sh does: Thurbox writes its active set read-modify-write,
+        // so a heartbeat tick at the same moment can drop the install from it.
+        self.wait("the extension to stay active", Duration::from_secs(20), || {
+            self.cli(&["extension", "activate", "auto-continue"]);
+            std::thread::sleep(Duration::from_millis(300));
+            self.active("auto-continue")
+        });
         let bin = self.ext_home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let _ = std::fs::remove_file(bin.join("thurbox-auto-continue"));

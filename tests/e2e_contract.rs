@@ -117,11 +117,10 @@ fn setters_validate_and_unset_restores_the_global_value() {
     refused(&["config", "set", "message", &"x".repeat(501), "--session", &id]);
     refused(&["config", "set", "delay_secs", "soon", "--session", &id]);
     refused(&["config", "set", "delay_secs", "86401", "--session", &id]);
-    refused(&["config", "set", "windows", "seven_day", "--session", &id]);
+    refused(&["config", "set", "message", "# note to self", "--session", &id]);
     refused(&["config", "set", "enabled", "on", "--session", &shell]);
     refused(&["config", "set", "enabled", "on", "--session", "no-such-session"]);
     refused(&["config", "set", "message", "/clear"]);
-    refused(&["config", "unset", "message"]);
     assert!(status(&sb, &id)["overrides"]["message"].is_null(), "a refused set stored nothing");
 
     assert!(sb.tac(&["config", "set", "message", "carry on", "--session", &id]).status.success());
@@ -131,6 +130,12 @@ fn setters_validate_and_unset_restores_the_global_value() {
     assert_eq!(json(&out)["value"], Value::Null);
     let s = status(&sb, &id);
     assert_eq!(s["settings"]["message"], serde_json::json!({ "value": "continue", "source": "default" }));
+
+    // A unique id prefix names the session, as it does for thurbox-cli.
+    let out = sb.tac(&["config", "set", "delay_secs", "5", "--session", &id[..8], "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(json(&out)["session"], id.as_str());
+    assert!(sb.tac(&["config", "unset", "delay_secs", "--session", &id]).status.success());
 
     // A hand-written bad override is ignored, and said so.
     sb.cli(&["session", "meta", "set", &id, "auto-continue.delay_secs", "--", "forever"]);
@@ -155,4 +160,47 @@ fn a_message_changed_while_armed_is_the_one_sent() {
     assert!(sb.tac(&["config", "set", "message", "resume the task", "--session", &id]).status.success());
     sb.tick_until_fired(&id);
     assert_eq!(sb.received(&id), ["hello", "resume the task"]);
+}
+
+/// Usage errors exit 2, and with --json still print one object.
+#[test]
+fn usage_errors_exit_2_with_a_json_object() {
+    let sb = Sandbox::new();
+    let id = sb.session("worker", "claude");
+    for args in [
+        vec!["config", "set", "windows", "seven_day", "--session", id.as_str(), "--json"],
+        vec!["config", "unset", "message", "--json"],
+        vec!["config", "set", "message", "--json"],
+        vec!["config", "sett", "message", "x", "--json"],
+    ] {
+        let out = sb.tac(&args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        let v = json(&out);
+        assert_eq!(v["ok"], false, "{args:?}");
+        assert!(v["error"].as_str().is_some_and(|e| !e.is_empty()), "{args:?}");
+    }
+}
+
+/// A config the new rules refuse can still be read and fixed from the CLI,
+/// and nothing is typed while it is wrong.
+#[test]
+fn a_config_the_rules_refuse_can_still_be_fixed_from_the_cli() {
+    let sb = Sandbox::new();
+    let id = sb.session("worker", "claude");
+    std::fs::write(sb.ext_home.join("config.toml"), "enabled = true\nmessage = \"/clear\"\n").unwrap();
+
+    let out = sb.tac(&["status", "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let v = json(&out);
+    assert_eq!(v["warnings"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["global"]["message"]["value"], "continue");
+
+    sb.script(&id, &["limit:five_hour:1:cancelled", "ok"]);
+    sb.prompt(&id, "hello");
+    sb.wait("the hook", std::time::Duration::from_secs(20), || sb.ctl_file(&id, "hooks.log").contains("StopFailure"));
+    assert_eq!(sb.episode(&id), None, "nothing is armed while the config is refused");
+
+    assert!(sb.tac(&["config", "set", "message", "continue"]).status.success());
+    let v = json(&sb.tac(&["status", "--json"]));
+    assert_eq!(v["warnings"], serde_json::json!([]));
 }

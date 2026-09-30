@@ -21,7 +21,13 @@ pub const DELAY_KEY: &str = "auto-continue.delay_secs";
 pub const SESSION_SETTINGS: [(&str, &str); 3] =
     [("enabled", ENABLED_KEY), ("message", MESSAGE_KEY), ("delay_secs", DELAY_KEY)];
 
-pub const MAX_MESSAGE_CHARS: usize = 500;
+/// Short enough to verify on screen: Claude wraps a longer message over
+/// several composer lines.
+pub const MAX_MESSAGE_CHARS: usize = 200;
+
+/// Every key `config.toml` takes.
+pub const GLOBAL_KEYS: [&str; 7] =
+    ["enabled", "delay_secs", "message", "windows", "max_attempts", "on_menu", "confirm_secs"];
 pub const MAX_DELAY_SECS: u64 = 86_400;
 
 /// What to do when Claude's usage-limit menu is open at send time.
@@ -77,21 +83,40 @@ impl Config {
     /// Read the config. A missing file is the defaults; a broken one is an
     /// error, so a typo never silently turns the feature on or off.
     pub fn load(home: &Path) -> Result<Self, String> {
-        let path = home.join("config.toml");
-        match std::fs::read_to_string(&path) {
-            Ok(text) => {
-                let mut cfg: Self = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-                let table: toml::Table = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-                cfg.present = table.keys().cloned().collect();
-                // The same rules as `config set`: a hand edit cannot put a
-                // slash command in the composer or a send days away.
-                validate_message(&cfg.message).map_err(|e| format!("{}: {e}", path.display()))?;
-                validate_delay(&cfg.delay_secs.to_string()).map_err(|e| format!("{}: {e}", path.display()))?;
-                Ok(cfg)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(format!("{}: {e}", path.display())),
+        let (cfg, warnings) = Self::load_lenient(home)?;
+        match warnings.first() {
+            Some(w) => Err(format!("{}: {w}", home.join("config.toml").display())),
+            None => Ok(cfg),
         }
+    }
+
+    /// [`Self::load`] for the setters and `status`: a value the rules refuse
+    /// takes its default and is reported, so the command that fixes it still
+    /// runs. The engine never uses this; it sends nothing on such a config.
+    pub fn load_lenient(home: &Path) -> Result<(Self, Vec<String>), String> {
+        let path = home.join("config.toml");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Self::default(), Vec::new())),
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        };
+        let mut cfg: Self = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let table: toml::Table = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        cfg.present = table.keys().cloned().collect();
+        // The same rules as `config set`: a hand edit cannot put a slash
+        // command in the composer or a send days away.
+        let mut warnings = Vec::new();
+        if let Err(e) = validate_message(&cfg.message) {
+            warnings.push(format!("config.toml `message` ignored: {e}"));
+            cfg.message = Self::default().message;
+            cfg.present.remove("message");
+        }
+        if let Err(e) = validate_delay(&cfg.delay_secs.to_string()) {
+            warnings.push(format!("config.toml `delay_secs` ignored: {e}"));
+            cfg.delay_secs = Self::default().delay_secs;
+            cfg.present.remove("delay_secs");
+        }
+        Ok((cfg, warnings))
     }
 
     pub fn save(&self, home: &Path) -> Result<(), String> {
@@ -225,8 +250,10 @@ pub fn validate_message(value: &str) -> Result<String, String> {
     if value.chars().count() > MAX_MESSAGE_CHARS {
         return Err(format!("`message` must be at most {MAX_MESSAGE_CHARS} characters"));
     }
-    if value.trim_start().starts_with(['/', '!']) {
-        return Err("`message` must not start with / or !: it would run a Claude command or a shell".into());
+    if value.trim_start().starts_with(['/', '!', '#']) {
+        return Err(
+            "`message` must not start with /, ! or #: Claude reads those as a command, a shell or a memory".into()
+        );
     }
     Ok(value.to_string())
 }
@@ -322,6 +349,19 @@ mod tests {
         }
     }
 
+    /// Setters and status must still work on a config the engine refuses, or
+    /// the command that fixes it could not run.
+    #[test]
+    fn a_lenient_load_falls_back_and_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "message = \"/clear\"\ndelay_secs = 60\n").unwrap();
+        let (cfg, warnings) = Config::load_lenient(dir.path()).unwrap();
+        assert_eq!(cfg.message, "continue");
+        assert_eq!(cfg.global().message.source, Source::Default);
+        assert_eq!(cfg.delay_secs, 60);
+        assert_eq!(warnings.len(), 1);
+    }
+
     #[test]
     fn a_bad_override_falls_back_and_warns() {
         let e = Config::default().for_session(&meta(&[(DELAY_KEY, "forever"), (MESSAGE_KEY, "/clear")]));
@@ -332,7 +372,7 @@ mod tests {
 
     #[test]
     fn messages_that_could_not_be_typed_safely_are_refused() {
-        for bad in ["", "   ", "two\nlines", "tab\there", "/clear", "  /compact", "!ls"] {
+        for bad in ["", "   ", "two\nlines", "tab\there", "/clear", "  /compact", "!ls", "# remember this"] {
             assert!(validate_message(bad).is_err(), "{bad:?}");
         }
         assert!(validate_message(&"x".repeat(MAX_MESSAGE_CHARS)).is_ok());
