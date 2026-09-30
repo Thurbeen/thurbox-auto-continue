@@ -84,15 +84,21 @@ select_row() {
 wait_for "Auto-continue · F11"
 k F6 1.5
 k ']' 1.5
+# Idempotent: `t` toggles, so it is pressed only on the file's row, and only
+# while that row still reads `untrusted`.
 grant() {
-    for _ in $(seq 1 40); do
-        if screen | grep '│▸' | grep -qF "$1"; then
-            k t 1.5
-            screen | grep '│▸' | grep -qF "trusted ·" && return 0
+    for _ in $(seq 1 60); do
+        if screen | grep -F "$1" | grep -qF "· trusted ·"; then
+            return 0
         fi
-        k j 0.3
+        if screen | grep '│▸' | grep -F "$1" | grep -qF "untrusted"; then
+            k t 1.5
+        else
+            k j 0.3
+        fi
     done
     echo "demo/record.sh: could not trust $1" >&2
+    screen >&2
     exit 1
 }
 grant 85_auto_continu
