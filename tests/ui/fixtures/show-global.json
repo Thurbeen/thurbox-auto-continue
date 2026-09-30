@@ -1,0 +1,5 @@
+{
+  "enabled": { "value": false, "source": "default" },
+  "message": { "value": "continue", "source": "default" },
+  "delay_secs": { "value": 300, "source": "default" }
+}

@@ -1,0 +1,125 @@
+{
+  "schema": 2,
+  "extension_active": true,
+  "global": {
+    "enabled": { "value": false, "source": "default" },
+    "message": { "value": "STATUS-CARRIES-THIS-BUT-THE-MONITOR-NEVER-SHOWS-IT", "source": "default" },
+    "delay_secs": { "value": 300, "source": "default" },
+    "windows": ["five_hour"],
+    "max_attempts": 2
+  },
+  "warnings": [],
+  "sessions": [
+    {
+      "id": "00000000-0000-4000-8000-00000000000a", "name": "worker", "agent": "claude",
+      "eligible": true, "ineligible_reason": null, "enabled": true,
+      "settings": {
+        "enabled": { "value": true, "source": "session" },
+        "message": { "value": "STATUS-CARRIES-THIS-BUT-THE-MONITOR-NEVER-SHOWS-IT", "source": "session" },
+        "delay_secs": { "value": 60, "source": "session" }
+      },
+      "overrides": { "enabled": "on", "message": "STATUS-CARRIES-THIS-BUT-THE-MONITOR-NEVER-SHOWS-IT", "delay_secs": "60" },
+      "episode": {
+        "state": "armed", "label": "armed", "reason": null,
+        "window": "five_hour", "resets_at_ms": 1790765490000,
+        "next_send_at_ms": 1790765790000,
+        "attempt": 1, "max_attempts": 2,
+        "sent_at_ms": null, "updated_at_ms": 1790761890000
+      },
+      "last_outcome": null,
+      "warnings": [],
+      "host": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000b", "name": "reviewer", "agent": "claude",
+      "eligible": true, "ineligible_reason": null, "enabled": true,
+      "settings": {
+        "enabled": { "value": true, "source": "session" },
+        "message": { "value": "continue", "source": "default" },
+        "delay_secs": { "value": 300, "source": "default" }
+      },
+      "overrides": { "enabled": "on", "message": null, "delay_secs": null },
+      "episode": {
+        "state": "sent", "label": "sent", "reason": null,
+        "window": "five_hour", "resets_at_ms": 1790760810000,
+        "next_send_at_ms": null, "attempt": 1, "max_attempts": 2,
+        "sent_at_ms": 1790761290000, "updated_at_ms": 1790761300000
+      },
+      "last_outcome": { "state": "sent", "reason": null, "label": "sent", "at_ms": 1790761300000 },
+      "warnings": [],
+      "host": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000c", "name": "docs", "agent": "claude",
+      "eligible": true, "ineligible_reason": null, "enabled": false,
+      "settings": {
+        "enabled": { "value": false, "source": "default" },
+        "message": { "value": "continue", "source": "default" },
+        "delay_secs": { "value": 300, "source": "default" }
+      },
+      "overrides": { "enabled": null, "message": null, "delay_secs": null },
+      "episode": null, "last_outcome": null, "warnings": [], "host": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000d", "name": "codex-cli", "agent": "codex",
+      "eligible": false, "ineligible_reason": "not-claude", "enabled": false,
+      "settings": {
+        "enabled": { "value": false, "source": "default" },
+        "message": { "value": "continue", "source": "default" },
+        "delay_secs": { "value": 300, "source": "default" }
+      },
+      "overrides": { "enabled": null, "message": null, "delay_secs": null },
+      "episode": null, "last_outcome": null, "warnings": [], "host": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000e", "name": "on-devbox", "agent": "claude",
+      "eligible": true, "ineligible_reason": null, "enabled": true,
+      "settings": {
+        "enabled": { "value": true, "source": "session" },
+        "message": { "value": "continue", "source": "default" },
+        "delay_secs": { "value": 300, "source": "default" }
+      },
+      "overrides": { "enabled": "on", "message": null, "delay_secs": null },
+      "episode": {
+        "state": "skipped", "label": "skipped:transcript-moved", "reason": "transcript-moved",
+        "window": "five_hour", "resets_at_ms": 1790758410000,
+        "next_send_at_ms": null, "attempt": 1, "max_attempts": 2,
+        "sent_at_ms": null, "updated_at_ms": 1790758710000
+      },
+      "last_outcome": { "state": "skipped", "reason": "transcript-moved", "label": "skipped:transcript-moved", "at_ms": 1790758710000 },
+      "warnings": [],
+      "host": { "backend": "ssh:devbox", "reason": null, "extension_active": true }
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000f", "name": "on-oldbox", "agent": "claude",
+      "eligible": false, "ineligible_reason": "remote", "enabled": false,
+      "settings": {
+        "enabled": { "value": false, "source": "default" },
+        "message": { "value": "continue", "source": "default" },
+        "delay_secs": { "value": 300, "source": "default" }
+      },
+      "overrides": { "enabled": null, "message": null, "delay_secs": null },
+      "episode": null, "last_outcome": null, "warnings": [],
+      "host": { "backend": "ssh:oldbox", "reason": "not-installed", "extension_active": null }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000010", "name": "stubborn", "agent": "claude",
+      "eligible": true, "ineligible_reason": null, "enabled": true,
+      "settings": {
+        "enabled": { "value": true, "source": "session" },
+        "message": { "value": "continue", "source": "default" },
+        "delay_secs": { "value": 300, "source": "default" }
+      },
+      "overrides": { "enabled": "on", "message": null, "delay_secs": null },
+      "episode": {
+        "state": "gave-up", "label": "gave-up:max-attempts", "reason": "max-attempts",
+        "window": "five_hour", "resets_at_ms": 1790750000000,
+        "next_send_at_ms": null, "attempt": 2, "max_attempts": 2,
+        "sent_at_ms": 1790750400000, "updated_at_ms": 1790752000000
+      },
+      "last_outcome": { "state": "gave-up", "reason": "max-attempts", "label": "gave-up:max-attempts", "at_ms": 1790752000000 },
+      "warnings": [],
+      "host": null
+    }
+  ]
+}
