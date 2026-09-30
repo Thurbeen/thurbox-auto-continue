@@ -84,14 +84,12 @@ select_row() {
 wait_for "Auto-continue · F11"
 k F6 1.5
 k ']' 1.5
-# Idempotent: `t` toggles, so it is pressed only on the file's row, and only
-# while that row still reads `untrusted`.
+# Idempotent: `t` toggles, so it is pressed only with the file's row selected,
+# and only while the line under the list does not already say it is granted.
 grant() {
     for _ in $(seq 1 60); do
-        if screen | grep -F "$1" | grep -qF "· trusted ·"; then
-            return 0
-        fi
-        if screen | grep '│▸' | grep -F "$1" | grep -qF "untrusted"; then
+        if screen | grep '│▸' | grep -qF "$1"; then
+            screen | grep -qF "granted; t revokes" && return 0
             k t 1.5
         else
             k j 0.3
@@ -102,6 +100,7 @@ grant() {
     exit 1
 }
 grant 85_auto_continu
+for _ in $(seq 1 40); do k k 0.1; done
 grant 86_auto_continu
 k Escape 1
 k C-q 2
