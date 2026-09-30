@@ -299,8 +299,8 @@ fixed, and `status` lists the problem under `warnings`.
 
 | symptom | check |
 |---|---|
-| nothing happens at a limit | `thurbox-auto-continue status`: is the session on, and is `extension active`? Look at the episode's reason, and the last lines of `~/.config/thurbox/auto-continue/auto-continue.log` |
-| no episode is ever recorded | `~/.local/bin` must be on the `PATH` Claude runs with. A Claude started with another `CLAUDE_CONFIG_DIR` does not see the hook. The sweep catches missed limits within 15 minutes |
+| nothing happens at a limit | `thurbox-auto-continue status`: is the session on, and does it print `extension: INACTIVE`? Look at the episode's reason, and the last lines of `~/.config/thurbox/auto-continue/auto-continue.log` |
+| no episode is ever recorded | `~/.local/bin` must be on the `PATH` Claude runs with. A Claude started with another `CLAUDE_CONFIG_DIR` does not see the hook. For an enabled session, the 15-minute sweep also picks up a limit the hook missed |
 | pane says it needs the `run` capability | grant it once, as in [the plugin section](#the-thurbox-tui-plugin) |
 | pane says the binary is not installed | run `./install.sh` on that machine, and make sure `~/.local/bin` is on `PATH` |
 | no badge on session rows | grant `86_auto_continue_badge.lua` its `run` too, and check that the session is Claude's and on |
