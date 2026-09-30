@@ -38,15 +38,17 @@ pub struct Sandbox {
     extra_env: Vec<(String, String)>,
 }
 
+/// `name` on the test runner's own PATH.
+fn on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
+}
+
 pub fn thurbox_cli() -> PathBuf {
     if let Some(p) = std::env::var_os("TAC_THURBOX_CLI") {
         return PathBuf::from(p);
     }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path)
-        .map(|d| d.join("thurbox-cli"))
-        .find(|p| p.is_file())
-        .expect("no thurbox-cli: put one on PATH or set TAC_THURBOX_CLI")
+    on_path("thurbox-cli").expect("no thurbox-cli: put one on PATH or set TAC_THURBOX_CLI")
 }
 
 fn fake_claude() -> PathBuf {
@@ -81,6 +83,9 @@ impl Sandbox {
         }
         std::os::unix::fs::symlink(thurbox_cli(), bin.join("thurbox-cli")).unwrap();
         std::os::unix::fs::symlink(BIN, bin.join("thurbox-auto-continue")).unwrap();
+        // tmux may live outside the sandbox PATH (Homebrew's /opt/homebrew/bin).
+        let tmux = on_path("tmux").expect("tests need tmux on PATH");
+        std::os::unix::fs::symlink(tmux, bin.join("tmux")).unwrap();
         std::fs::write(home.join(".claude/settings.json"), USER_SETTINGS).unwrap();
         let sb = Self {
             ext_home: home.join(".config/thurbox/auto-continue"),
