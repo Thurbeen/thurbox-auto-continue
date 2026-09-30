@@ -83,12 +83,7 @@ impl Config {
             "message" if !value.trim().is_empty() => self.message = value.to_string(),
             "message" => return Err(bad("some text")),
             "windows" => {
-                self.windows = value
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|w| !w.is_empty())
-                    .map(String::from)
-                    .collect()
+                self.windows = value.split(',').map(str::trim).filter(|w| !w.is_empty()).map(String::from).collect()
             }
             "max_attempts" => self.max_attempts = value.parse().map_err(|_| bad("a number"))?,
             "on_menu" => {

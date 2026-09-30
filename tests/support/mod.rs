@@ -99,6 +99,10 @@ impl Sandbox {
         sb.git(&["commit", "-qm", "init"]);
         // Thurbox's own status hooks, delivered through `--settings`.
         sb.cli(&["extension", "activate", "hooks"]);
+        // The first heartbeat tick activates the other built-ins, and Thurbox
+        // writes its active set read-modify-write: an install racing that tick
+        // can be dropped from it. Wait for the built-ins to settle first.
+        sb.wait("the built-in extensions to settle", Duration::from_secs(20), || sb.active("ui-skill"));
         let agents = sb.root.join("cfg/agents.toml");
         let text = std::fs::read_to_string(&agents).unwrap();
         let fake = format!("command = \"{}\"", fake_claude().display());
@@ -110,12 +114,21 @@ impl Sandbox {
     pub fn install(&self) {
         let src = Path::new(env!("CARGO_MANIFEST_DIR"));
         self.cli(&["extension", "install", src.to_str().unwrap()]);
+        assert!(self.active("auto-continue"), "install left the extension inactive");
         let bin = self.ext_home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let _ = std::fs::remove_file(bin.join("thurbox-auto-continue"));
         std::os::unix::fs::symlink(BIN, bin.join("thurbox-auto-continue")).unwrap();
         // Tests that need a clock run with no delay and a short confirmation.
         self.config(&[("delay_secs", "0"), ("confirm_secs", "5")]);
+    }
+
+    pub fn active(&self, name: &str) -> bool {
+        self.cli(&["extension", "list"])
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|e| e["name"] == name && e["active"] == true)
     }
 
     pub fn with_env(mut self, key: &str, value: &str) -> Self {
@@ -171,7 +184,16 @@ impl Sandbox {
 
     /// A session running `agent`, its composer up.
     pub fn session(&self, name: &str, agent: &str) -> String {
-        let v = self.cli(&["session", "create", "--name", name, "--repo-path", self.repo.to_str().unwrap(), "--agent", agent]);
+        let v = self.cli(&[
+            "session",
+            "create",
+            "--name",
+            name,
+            "--repo-path",
+            self.repo.to_str().unwrap(),
+            "--agent",
+            agent,
+        ]);
         let id = v["id"].as_str().unwrap().to_string();
         if self.socket.borrow().is_none() {
             *self.socket.borrow_mut() = v["tmux_socket"].as_str().map(String::from);
@@ -230,13 +252,7 @@ impl Sandbox {
     }
 
     pub fn session_row(&self, id: &str) -> Value {
-        self.cli(&["session", "list"])
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|s| s["id"] == id)
-            .cloned()
-            .unwrap()
+        self.cli(&["session", "list"]).as_array().unwrap().iter().find(|s| s["id"] == id).cloned().unwrap()
     }
 
     /// The pass Thurbox's heartbeat runs every minute, run now.
@@ -266,7 +282,13 @@ impl Sandbox {
     /// Hit the limit on `id` and wait for the hook to arm the episode.
     pub fn hit_limit(&self, id: &str) -> Value {
         self.prompt(id, "hello");
-        self.wait("record to arm an episode", Duration::from_secs(20), || self.state(id).as_deref() == Some("armed"));
+        // Armed, and the hook has returned: nothing is still writing.
+        self.wait("record to arm an episode", Duration::from_secs(30), || {
+            self.ctl_file(id, "hooks.log")
+                .lines()
+                .any(|l| l.starts_with("StopFailure") && l.contains("thurbox-auto-continue"))
+                && self.state(id).as_deref() == Some("armed")
+        });
         self.episode(id).unwrap()
     }
 

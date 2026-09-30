@@ -170,10 +170,7 @@ impl Thurbox {
     /// Whether the extension is installed and active on this machine.
     pub fn extension_active(&self) -> Result<bool, String> {
         let v = self.run(&["extension", "list"])?;
-        Ok(v.as_array()
-            .into_iter()
-            .flatten()
-            .any(|e| e["name"] == EXTENSION_NAME && e["active"] == true))
+        Ok(v.as_array().into_iter().flatten().any(|e| e["name"] == EXTENSION_NAME && e["active"] == true))
     }
 
     pub fn automations(&self) -> Result<Vec<Automation>, String> {

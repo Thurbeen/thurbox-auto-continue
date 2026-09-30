@@ -126,8 +126,7 @@ fn main() -> ExitCode {
 }
 
 fn find(tb: &Thurbox, reference: &str) -> Result<Session, String> {
-    tb.session(reference)?
-        .ok_or_else(|| format!("no session `{reference}`; `thurbox-cli session list` shows the ids"))
+    tb.session(reference)?.ok_or_else(|| format!("no session `{reference}`; `thurbox-cli session list` shows the ids"))
 }
 
 fn toggle(reference: &str, on: Option<bool>) -> Result<(), String> {
@@ -136,10 +135,7 @@ fn toggle(reference: &str, on: Option<bool>) -> Result<(), String> {
     match on {
         Some(true) => {
             if !s.is_claude() {
-                return Err(format!(
-                    "`{}` runs `{}`; auto-continue only acts on Claude sessions",
-                    s.name, s.agent
-                ));
+                return Err(format!("`{}` runs `{}`; auto-continue only acts on Claude sessions", s.name, s.agent));
             }
             if !s.is_local() {
                 return Err(format!(
@@ -230,7 +226,9 @@ fn status(home: &std::path::Path, only: Option<&str>, as_json: bool) -> Result<(
         cfg.windows.join(",")
     );
     match out["extension_active"].as_bool() {
-        Some(false) => println!("extension: INACTIVE — nothing is sent (`thurbox-cli extension activate auto-continue`)"),
+        Some(false) => {
+            println!("extension: INACTIVE — nothing is sent (`thurbox-cli extension activate auto-continue`)")
+        }
         None => println!("extension: unknown (thurbox-cli did not answer)"),
         Some(true) => {}
     }

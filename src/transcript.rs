@@ -55,20 +55,13 @@ impl Transcript {
     }
 
     pub fn parse(text: &str) -> Self {
-        let rows = text
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .filter_map(|l| serde_json::from_str(l).ok())
-            .collect();
+        let rows = text.lines().filter(|l| !l.trim().is_empty()).filter_map(|l| serde_json::from_str(l).ok()).collect();
         Self { rows }
     }
 
     /// The newest proven quota rejection, by timestamp.
     pub fn latest_rejection(&self) -> Option<Rejection> {
-        self.rows
-            .iter()
-            .filter_map(rejection)
-            .max_by_key(|r| r.at_ms)
+        self.rows.iter().filter_map(rejection).max_by_key(|r| r.at_ms)
     }
 
     /// Whether anything conversational happened after `at_ms`: a user row (the

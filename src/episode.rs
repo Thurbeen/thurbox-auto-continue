@@ -59,6 +59,9 @@ pub struct Episode {
     pub hook_state_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation_id: Option<i64>,
+    /// When we pressed Enter, epoch ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_at_ms: Option<i64>,
     pub updated_at_ms: i64,
 }
 
@@ -73,7 +76,8 @@ impl Episode {
 
     /// `skipped:<why>` / `gave-up:<why>` as one word for logs and status.
     pub fn label(&self) -> String {
-        let state = serde_json::to_value(self.state).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
+        let state =
+            serde_json::to_value(self.state).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
         match &self.reason {
             Some(why) => format!("{state}:{why}"),
             None => state,
@@ -88,22 +92,17 @@ pub const RETRY_WINDOW_MS: i64 = 30 * 60 * 1000;
 /// The attempt number a new rejection gets, given the previous episode.
 pub fn next_attempt(previous: Option<&Episode>, rejected_at_ms: i64) -> u32 {
     match previous {
-        Some(p)
-            if matches!(p.state, State::Sent | State::Unconfirmed)
-                && rejected_at_ms >= p.updated_at_ms
-                && rejected_at_ms - p.updated_at_ms <= RETRY_WINDOW_MS =>
+        Some(Episode { state: State::Sent | State::Unconfirmed, sent_at_ms: Some(sent), attempt, .. })
+            if rejected_at_ms >= *sent && rejected_at_ms - sent <= RETRY_WINDOW_MS =>
         {
-            p.attempt + 1
+            attempt + 1
         }
         _ => 1,
     }
 }
 
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -123,6 +122,7 @@ mod tests {
             attempt,
             hook_state_at: None,
             automation_id: None,
+            sent_at_ms: Some(updated),
             updated_at_ms: updated,
         }
     }

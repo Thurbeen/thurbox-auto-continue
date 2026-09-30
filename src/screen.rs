@@ -44,15 +44,21 @@ fn is_rule(line: &str) -> bool {
 pub fn classify(text: &str, message: &str) -> Screen {
     let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
 
-    let has = |needle: &str| lines.iter().any(|l| l.contains(needle));
-    if has("What do you want to do?") && has("Stop and wait for limit to reset") {
+    // The composer is the last `❯` line sitting directly between two rules.
+    let composer = (1..lines.len().saturating_sub(1))
+        .rev()
+        .find(|&i| lines[i].trim_start().starts_with(PROMPT) && is_rule(lines[i - 1]) && is_rule(lines[i + 1]));
+
+    // The menu replaces the composer while it is open, so it counts only when
+    // no composer is drawn below it; a closed one can linger in the scrollback.
+    let last = |needle: &str| lines.iter().rposition(|l| l.contains(needle));
+    if let (Some(menu), Some(_)) = (last("What do you want to do?"), last("Stop and wait for limit to reset"))
+        && composer.is_none_or(|c| c < menu)
+    {
         return Screen::LimitMenu;
     }
 
-    // The composer is the last `❯` line sitting directly between two rules.
-    let Some(at) = (1..lines.len().saturating_sub(1)).rev().find(|&i| {
-        lines[i].trim_start().starts_with(PROMPT) && is_rule(lines[i - 1]) && is_rule(lines[i + 1])
-    }) else {
+    let Some(at) = composer else {
         return Screen::Unknown;
     };
 
@@ -68,10 +74,8 @@ pub fn classify(text: &str, message: &str) -> Screen {
         return Screen::Unknown;
     }
 
-    let typed = lines[at]
-        .trim_start()
-        .trim_start_matches(PROMPT)
-        .trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}');
+    let typed =
+        lines[at].trim_start().trim_start_matches(PROMPT).trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}');
     if typed.is_empty() {
         Screen::EmptyPrompt
     } else if typed == message.trim() {
@@ -103,6 +107,13 @@ mod tests {
         for (name, want) in cases {
             assert_eq!(classify(&fixture(name), "continue"), want, "{name}");
         }
+    }
+
+    /// A menu that was closed stays in the scrollback above the composer.
+    #[test]
+    fn a_closed_menu_in_the_scrollback_is_not_open() {
+        let screen = format!("{}\n{}", fixture("limit-menu.txt"), fixture("empty-after-cancel.txt"));
+        assert_eq!(classify(&screen, "continue"), Screen::EmptyPrompt);
     }
 
     #[test]

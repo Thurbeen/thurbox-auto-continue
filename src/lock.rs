@@ -16,7 +16,8 @@ impl SessionLock {
     pub fn acquire(home: &Path, session: &str, wait: Duration) -> Result<Option<Self>, String> {
         let dir = home.join("locks");
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let safe: String = session.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
+        let safe: String =
+            session.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
         let path = dir.join(format!("{safe}.lock"));
         let file = File::options()
             .create(true)

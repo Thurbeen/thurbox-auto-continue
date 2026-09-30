@@ -13,7 +13,7 @@ name = "auto-continue"
 description = "Type `continue` into a Claude session once its usage limit has reset — headless, no model involved."
 config_version = 1
 version = "0.1.0"
-min_thurbox_version = "2.39.4"
+min_thurbox_version = "2.36.2"
 home = "~/.config/thurbox/auto-continue"
 
 # The user's settings, seeded once and never overwritten.

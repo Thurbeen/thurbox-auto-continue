@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: shellcheck install.sh
+
+  # The end-to-end suite drives a real, sandboxed thurbox-cli and tmux server:
+  # against the oldest Thurbox the manifest declares, and the latest release.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        thurbox: [v2.36.2, latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install tmux
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install tmux; else sudo apt-get update -q && sudo apt-get install -yq tmux; fi
+          tmux -V
+      - name: Download thurbox ${{ matrix.thurbox }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$RUNNER_OS" in
+            macOS) target=aarch64-apple-darwin ;;
+            *) target=x86_64-unknown-linux-musl ;;
+          esac
+          tag=${{ matrix.thurbox }}
+          [ "$tag" = latest ] && tag=
+          dir="$RUNNER_TEMP/thurbox"
+          mkdir -p "$dir"
+          gh release download $tag --repo Thurbeen/thurbox --dir "$dir" \
+            --pattern "*-$target.tar.gz" --pattern '*-checksums.txt'
+          (cd "$dir" && grep -- "-$target.tar.gz" ./*-checksums.txt | shasum -a 256 -c -)
+          tar -xzf "$dir"/*-"$target".tar.gz -C "$dir"
+          cli=$(find "$dir" -name thurbox-cli -type f | head -1)
+          "$cli" --version
+          echo "TAC_THURBOX_CLI=$cli" >> "$GITHUB_ENV"
+      - run: cargo test --locked

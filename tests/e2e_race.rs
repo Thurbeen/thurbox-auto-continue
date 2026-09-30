@@ -103,7 +103,7 @@ fn the_limit_menu_gets_one_escape_then_the_message() {
     let sb = Sandbox::new();
     let id = armed(&sb, &["limit:five_hour:1:menu", "ok"]);
     assert!(sb.tac(&["fire", &id]).status.success());
-    assert_eq!(sb.received(&id), ["hello", "continue"]);
+    assert_eq!(sb.received(&id), ["hello", "continue"], "{:?} {:?}", sb.episode(&id), sb.keys(&id));
     assert_eq!(sb.keys(&id).iter().filter(|k| *k == "escape").count(), 1);
     assert_eq!(sb.state(&id).as_deref(), Some("sent"));
 }
@@ -124,9 +124,10 @@ fn the_limit_menu_is_left_alone_when_asked() {
 fn an_armed_native_wait_is_skipped_without_escape() {
     let sb = Sandbox::new();
     let id = armed(&sb, &["limit:five_hour:1:armed", "ok"]);
+    let keys_before = sb.keys(&id);
     assert!(sb.tac(&["fire", &id]).status.success());
     assert_eq!(sb.episode(&id).unwrap()["reason"], "armed-wait");
-    assert!(sb.keys(&id).is_empty(), "{:?}", sb.keys(&id));
+    assert_eq!(sb.keys(&id), keys_before, "not one key pressed");
     assert_eq!(sb.received(&id), ["hello"]);
 }
 
@@ -163,7 +164,9 @@ fn re_rejections_re_arm_until_the_cap() {
     sb.script(&id, &["limit:five_hour:1:cancelled", "limit:five_hour:1:cancelled", "limit:five_hour:1:cancelled"]);
     sb.hit_limit(&id);
     sb.tick_until_fired(&id);
-    sb.wait("the re-rejection to re-arm", Duration::from_secs(20), || sb.episode(&id).is_some_and(|e| e["attempt"] == 2 && e["state"] == "armed"));
+    sb.wait("the re-rejection to re-arm", Duration::from_secs(20), || {
+        sb.episode(&id).is_some_and(|e| e["attempt"] == 2 && e["state"] == "armed")
+    });
     sb.tick_until_fired(&id);
     sb.wait("the cap", Duration::from_secs(20), || sb.state(&id).as_deref() == Some("gave-up"));
     assert_eq!(sb.received(&id), ["hello", "continue", "continue"]);
@@ -191,4 +194,53 @@ fn a_hung_thurbox_cli_cannot_hang_a_run() {
         assert!(out.status.success(), "{args:?}");
         assert!(start.elapsed() < Duration::from_secs(10), "{args:?} took {:?}", start.elapsed());
     }
+}
+
+/// Fleet's `refuel` restarts a session whose `working` has gone stale for 30
+/// minutes. On the hook path the episode signals `idle`, so that condition
+/// cannot hold (asserted in the A1 test). On the sweep path no signal is
+/// possible from outside the pane, the session still reads `working`, and a
+/// refuel restart can happen: its prompt lands in the transcript and our send
+/// is skipped, so the session gets one prompt, not two.
+#[test]
+fn a_refuel_restart_over_a_sweep_armed_episode_is_not_doubled() {
+    let sb = Sandbox::new();
+    sb.config(&[("enabled", "on")]);
+    let id = sb.session("worker", "claude");
+    sb.script(&id, &["limit:five_hour:1:cancelled:nohook", "ok"]);
+    sb.prompt(&id, "hello");
+    sb.wait("the rejection", Duration::from_secs(15), || sb.received(&id).len() == 1);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(sb.tac(&["sweep"]).status.success());
+    assert_eq!(sb.state(&id).as_deref(), Some("armed"));
+    assert_eq!(sb.session_row(&id)["hook_state"], "working", "refuel's stale-working condition can match here");
+
+    // What refuel does: restart with --resume, then prompt.
+    sb.cli(&["session", "restart", &id]);
+    sb.wait("the restarted fake", Duration::from_secs(15), || sb.screen(&id).contains("(fake)"));
+    std::thread::sleep(Duration::from_millis(500));
+    sb.prompt(&id, "keep going");
+    sb.wait("refuel's prompt", Duration::from_secs(15), || sb.received(&id).contains(&"keep going".to_string()));
+
+    let mut ep = sb.episode(&id).unwrap();
+    ep["fire_at_ms"] = serde_json::json!(0);
+    sb.cli(&["session", "meta", "set", &id, "auto-continue.episode", "--", &ep.to_string()]);
+    assert!(sb.tac(&["fire", &id]).status.success());
+    assert_eq!(sb.state(&id).as_deref(), Some("skipped"));
+    assert!(!sb.received(&id).contains(&"continue".to_string()), "{:?}", sb.received(&id));
+}
+
+/// A14: a session stuck in `working` with no limit in its transcript is none
+/// of our business: no episode, no signal.
+#[test]
+fn a_stale_working_session_without_an_episode_is_untouched() {
+    let sb = Sandbox::new();
+    sb.config(&[("enabled", "on")]);
+    let id = sb.session("worker", "claude");
+    sb.cli(&["session", "signal", "--session", &id, "--state", "working"]);
+    let before = sb.session_row(&id)["hook_state_at"].clone();
+    assert!(sb.tac(&["sweep"]).status.success());
+    assert_eq!(sb.episode(&id), None);
+    assert_eq!(sb.session_row(&id)["hook_state_at"], before);
+    assert!(sb.our_automations().is_empty());
 }

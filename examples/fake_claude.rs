@@ -68,13 +68,7 @@ fn iso(ms: u128) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z",
-        rem / 3600,
-        rem % 3600 / 60,
-        rem % 60,
-        ms % 1000
-    )
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z", rem / 3600, rem % 3600 / 60, rem % 60, ms % 1000)
 }
 
 fn uuid() -> String {
@@ -153,7 +147,8 @@ impl Fake {
 
     fn next_reply(&mut self) -> String {
         let script = std::fs::read_to_string(self.ctl.join("script")).unwrap_or_default();
-        let reply = script.lines().filter(|l| !l.trim().is_empty()).nth(self.replies_used).unwrap_or("ok").trim().to_string();
+        let reply =
+            script.lines().filter(|l| !l.trim().is_empty()).nth(self.replies_used).unwrap_or("ok").trim().to_string();
         self.replies_used += 1;
         reply
     }
@@ -198,11 +193,17 @@ impl Fake {
                     _ => View::Cancelled,
                 };
                 if self.view == View::Armed {
-                    let secs = std::fs::read_to_string(self.ctl.join("native_resume_secs")).ok().and_then(|s| s.trim().parse().ok());
+                    let secs = std::fs::read_to_string(self.ctl.join("native_resume_secs"))
+                        .ok()
+                        .and_then(|s| s.trim().parse().ok());
                     self.resume_at = secs.map(|s: u64| SystemTime::now() + Duration::from_secs(s));
                 }
                 if hook {
-                    self.hooks("StopFailure", "rate_limit", json!({ "error": "rate_limit", "last_assistant_message": line }));
+                    self.hooks(
+                        "StopFailure",
+                        "rate_limit",
+                        json!({ "error": "rate_limit", "last_assistant_message": line }),
+                    );
                 }
             }
             "transient" => {
@@ -216,7 +217,11 @@ impl Fake {
                 self.row(json!({ "type": "user", "message": { "role": "user", "content": text } }), asked);
                 self.history.push(format!("  ⎿  {line}"));
                 self.view = View::Normal;
-                self.hooks("StopFailure", "rate_limit", json!({ "error": "rate_limit", "last_assistant_message": line }));
+                self.hooks(
+                    "StopFailure",
+                    "rate_limit",
+                    json!({ "error": "rate_limit", "last_assistant_message": line }),
+                );
             }
             _ => {
                 self.row(json!({ "type": "user", "message": { "role": "user", "content": text } }), asked);

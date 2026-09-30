@@ -31,11 +31,13 @@ fn install_merges_the_hook_and_uninstall_removes_only_ours() {
     let merged = sb.settings();
     assert_eq!(merged["theme"], "dark");
     assert_eq!(merged["hooks"]["Stop"][0]["hooks"][0]["command"], "echo user-stop-hook");
-    let ours: Vec<String> = stopfailure_hooks(&merged).into_iter().filter(|c| c.contains("thurbox-auto-continue record")).collect();
+    let ours: Vec<String> =
+        stopfailure_hooks(&merged).into_iter().filter(|c| c.contains("thurbox-auto-continue record")).collect();
     assert_eq!(ours.len(), 1, "exactly one hook of ours: {merged}");
     assert!(!ours[0].contains("thurbox-cli session signal"), "uninstall would prune it by that text");
     assert!(stopfailure_hooks(&merged).contains(&"echo user-stopfailure-hook".to_string()));
-    let group = merged["hooks"]["StopFailure"].as_array().unwrap().iter().find(|g| g["matcher"] == "rate_limit").unwrap();
+    let group =
+        merged["hooks"]["StopFailure"].as_array().unwrap().iter().find(|g| g["matcher"] == "rate_limit").unwrap();
     assert_eq!(group["hooks"].as_array().unwrap().len(), 1);
 
     // Thurbox's own hooks still reach Claude through their `--settings` file.
@@ -45,7 +47,8 @@ fn install_merges_the_hook_and_uninstall_removes_only_ours() {
 
     // Installing again does not add a second copy.
     sb.install();
-    let again: Vec<String> = stopfailure_hooks(&sb.settings()).into_iter().filter(|c| c.contains("thurbox-auto-continue")).collect();
+    let again: Vec<String> =
+        stopfailure_hooks(&sb.settings()).into_iter().filter(|c| c.contains("thurbox-auto-continue")).collect();
     assert_eq!(again.len(), 1);
 
     let out = sb.tac(&["forget", "--all"]);
@@ -75,7 +78,10 @@ fn a_quota_limit_gets_exactly_one_continue_after_the_reset() {
     // Both hook sources ran: Thurbox's from `--settings`, ours from settings.json.
     let hooks = sb.ctl_file(&id, "hooks.log");
     assert!(hooks.lines().any(|l| l.starts_with("UserPromptSubmit") && l.contains("cfg/hooks/claude.json")), "{hooks}");
-    let ours = hooks.lines().find(|l| l.starts_with("StopFailure") && l.contains("thurbox-auto-continue record")).expect(&hooks);
+    let ours = hooks
+        .lines()
+        .find(|l| l.starts_with("StopFailure") && l.contains("thurbox-auto-continue record"))
+        .expect(&hooks);
     assert!(ours.contains("exit=0") && ours.contains("stdout_bytes=0"), "{ours}");
 
     // One pending send, and the session no longer reads as a stale `working`.
@@ -105,7 +111,9 @@ fn a_transient_429_schedules_nothing() {
     let id = sb.session("worker", "claude");
     sb.script(&id, &["transient"]);
     sb.prompt(&id, "hello");
-    sb.wait("the StopFailure hook to run", Duration::from_secs(15), || sb.ctl_file(&id, "hooks.log").contains("StopFailure"));
+    sb.wait("the StopFailure hook to run", Duration::from_secs(15), || {
+        sb.ctl_file(&id, "hooks.log").contains("StopFailure")
+    });
     std::thread::sleep(Duration::from_secs(4));
     assert_eq!(sb.episode(&id), None);
     assert!(sb.our_automations().is_empty());
@@ -170,7 +178,9 @@ fn a_non_claude_session_is_refused_and_ignored() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("only acts on Claude"));
 
     // Even a hook fired with that session's identity does nothing.
-    let payload = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stopfailure-hook-input.json")).unwrap();
+    let payload =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stopfailure-hook-input.json"))
+            .unwrap();
     let mut child = sb
         .command(support::BIN)
         .arg("record")
@@ -194,7 +204,9 @@ fn a_seven_day_window_is_skipped_by_default() {
     let id = sb.session("worker", "claude");
     sb.script(&id, &["limit:seven_day:1:cancelled", "ok"]);
     sb.prompt(&id, "hello");
-    sb.wait("the StopFailure hook to run", Duration::from_secs(15), || sb.ctl_file(&id, "hooks.log").contains("StopFailure"));
+    sb.wait("the StopFailure hook to run", Duration::from_secs(15), || {
+        sb.ctl_file(&id, "hooks.log").contains("StopFailure")
+    });
     std::thread::sleep(Duration::from_secs(3));
     assert!(sb.our_automations().is_empty());
     assert!(sb.state(&id).is_none_or(|s| s == "skipped"));
@@ -206,7 +218,9 @@ fn a_seven_day_window_is_skipped_by_default() {
 #[test]
 fn the_hook_is_silent_outside_thurbox_and_without_the_binary() {
     let sb = Sandbox::new();
-    let payload = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stopfailure-hook-input.json")).unwrap();
+    let payload =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stopfailure-hook-input.json"))
+            .unwrap();
     let hook = support::stopfailure_command(&sb);
     for path in [format!("{}:/usr/bin:/bin", sb.bin.display()), "/usr/bin:/bin".to_string()] {
         let mut child = sb
@@ -256,5 +270,29 @@ fn the_sweep_recovers_an_episode_the_hook_missed() {
     assert!(sb.tac(&["sweep"]).status.success());
     assert_eq!(sb.state(&id).as_deref(), Some("armed"));
     sb.tick_until_fired(&id);
-    assert_eq!(sb.received(&id), ["hello", "continue"]);
+    assert_eq!(sb.received(&id), ["hello", "continue"], "{:?}", sb.episode(&id));
+}
+
+/// `install.sh` leaves the extension active with the hook merged and the
+/// binary on PATH, and `--uninstall` takes all of it away again.
+#[test]
+fn the_installer_round_trips() {
+    let sb = Sandbox::bare();
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/install.sh");
+    let out = sb.command("sh").args([script, "--binary", support::BIN]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(sb.active("auto-continue"));
+    assert!(sb.home.join(".local/bin/thurbox-auto-continue").exists());
+    assert!(sb.ext_home.join("bin/thurbox-auto-continue").is_file());
+    assert!(sb.ext_home.join("config.toml").is_file());
+    assert!(stopfailure_hooks(&sb.settings()).iter().any(|c| c.contains("thurbox-auto-continue record")));
+    let sweep = sb.cli(&["automation", "list"]).as_array().unwrap().iter().any(|a| a["name"] == "auto-continue-sweep");
+    assert!(sweep, "the fallback sweep is scheduled");
+
+    let out = sb.command("sh").args([script, "--uninstall"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!sb.cli(&["extension", "list"]).as_array().unwrap().iter().any(|e| e["name"] == "auto-continue"));
+    assert!(!sb.home.join(".local/bin/thurbox-auto-continue").exists());
+    assert!(stopfailure_hooks(&sb.settings()).iter().all(|c| !c.contains("thurbox-auto-continue")));
+    assert_eq!(sb.settings()["hooks"]["Stop"][0]["hooks"][0]["command"], "echo user-stop-hook");
 }
