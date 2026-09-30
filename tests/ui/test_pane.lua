@@ -269,7 +269,7 @@ H.test(
     H.contains(screen(p), "200")
     retype(p, "m", "resume the task")
     local sets = H.asked_matching(
-      "'config' 'set' 'message' 'resume the task' '--session' '" .. id("0a") .. "'"
+      "'config' 'set' '--session' '" .. id("0a") .. "' '--json' '--' 'message' 'resume the task'"
     )
     H.eq(#sets, 1)
     H.eq(sets[1].session, id("0a"))
@@ -286,12 +286,7 @@ H.test("a refusal from the CLI is shown in the pane, not swallowed", function()
   H.contains(screen(p), "0 to 86400")
   H.eq(#H.asked_matching("'config' 'set'"), 0, "a negative delay never reaches the CLI")
   retype(p, "d", "90")
-  answer(
-    p,
-    "'config' 'set' 'delay_secs' '90'",
-    '{"ok":false,"error":"the host refused: disk full"}',
-    1
-  )
+  answer(p, "'--' 'delay_secs' '90'", '{"ok":false,"error":"the host refused: disk full"}', 1)
   local s = screen(p)
   H.contains(s, "✗")
   H.contains(s, "disk full")
@@ -307,7 +302,7 @@ H.test("a write that lands refreshes status and the editor", function()
   local before_show = #H.asked_matching("'config' 'show'")
   answer(
     p,
-    "'config' 'set' 'delay_secs' '90'",
+    "'--' 'delay_secs' '90'",
     '{"ok":true,"scope":"session","key":"delay_secs","value":"90"}'
   )
   local s = screen(p)
@@ -327,7 +322,9 @@ H.test("enabled cycles inherit → on → off → inherit for a session", functi
   )
   H.key(p, "e")
   H.eq(
-    #H.asked_matching("'config' 'set' 'enabled' 'on' '--session' '" .. id("0c") .. "'"),
+    #H.asked_matching(
+      "'config' 'set' '--session' '" .. id("0c") .. "' '--json' '--' 'enabled' 'on'"
+    ),
     1,
     "inherit → on"
   )
@@ -339,7 +336,9 @@ H.test("enabled on an overridden session steps to off, then back to the global",
   select_row(p, "worker")
   H.key(p, "e")
   H.eq(
-    #H.asked_matching("'config' 'set' 'enabled' 'off' '--session' '" .. id("0a") .. "'"),
+    #H.asked_matching(
+      "'config' 'set' '--session' '" .. id("0a") .. "' '--json' '--' 'enabled' 'off'"
+    ),
     1,
     "on → off"
   )
@@ -378,7 +377,9 @@ H.test(
     ready(p)
     select_row(p, "on-devbox")
     H.key(p, "e")
-    local sets = H.asked_matching("'config' 'set' 'enabled' 'off' '--session' '" .. id("0e") .. "'")
+    local sets = H.asked_matching(
+      "'config' 'set' '--session' '" .. id("0e") .. "' '--json' '--' 'enabled' 'off'"
+    )
     H.eq(#sets, 1)
     H.eq(sets[1].session, id("0a"), "run from a local session: the CLI delegates to ssh:devbox")
   end
@@ -393,7 +394,9 @@ H.test("with no local session, a remote session is asked on its own host", funct
   answer(p, "'status' '--json'", STATUS)
   select_row(p, "on-devbox")
   H.key(p, "e")
-  local sets = H.asked_matching("'config' 'set' 'enabled' 'off' '--session' '" .. id("0e") .. "'")
+  local sets = H.asked_matching(
+    "'config' 'set' '--session' '" .. id("0e") .. "' '--json' '--' 'enabled' 'off'"
+  )
   H.eq(sets[1].session, id("0e"), "the host's own install answers for its own session")
 end)
 
@@ -402,7 +405,7 @@ H.test("the global switch sets config.toml and the Settings row together", funct
   ready(p)
   select_row(p, "Every Claude session")
   H.key(p, "e")
-  local sets = H.asked_matching("'config' 'set' 'enabled' 'on' '--json'")
+  local sets = H.asked_matching("'config' 'set' '--json' '--' 'enabled' 'on'")
   H.eq(#sets, 1)
   H.absent(sets[1].program, "--session")
   local set = nil
@@ -430,7 +433,7 @@ H.test("a Settings-panel change reaches config.toml from an event, never from re
   H.eq(#H.asked_matching("'config' 'set'"), 0, "render does not write")
   H.contains(screen(p), "Settings")
   H.event("focus.pane", { from = "settings", to = "sessions" })
-  local sets = H.asked_matching("'config' 'set' 'enabled' 'on' '--json'")
+  local sets = H.asked_matching("'config' 'set' '--json' '--' 'enabled' 'on'")
   H.eq(#sets, 1, "mirrored on the next event")
   H.absent(sets[1].program, "--session")
 end)
@@ -468,14 +471,85 @@ H.test("an extension switched off is said up front: nothing is sent", function()
   H.contains(s, "nothing is sent")
 end)
 
-H.test("a Settings write the kernel refuses is shown", function()
+H.test("the mirror works while the pane is hidden: events read status themselves", function()
+  local p = fresh()
+  -- Never rendered: behind the agent since the TUI started.
+  H.event("focus.session", {})
+  local asks = H.asked_matching("'status' '--json'")
+  H.eq(#asks, 1, "the event asked for status")
+  H.answer(p, asks[1].key, STATUS)
+  H.event("focus.session", {})
+  H.settings["auto-continue.enabled"] = true
+  -- The kernel republishes the snapshot before each batch of events.
+  H.publish()
+  H.event("focus.pane", {})
+  local on = H.asked_matching("'--' 'enabled' 'on'")
+  H.eq(#on, 1, "switched on, still hidden")
+  H.answer(p, on[1].key, '{"ok":true,"scope":"global","key":"enabled","value":true}')
+  -- The write landed; the next event reads status again, still unrendered.
+  H.event("focus.session", {})
+  local newer = H.asked_matching("'status' '--json'")
+  local turned = STATUS:gsub(
+    '"enabled": { "value": false, "source": "default" }',
+    '"enabled": { "value": true, "source": "global" }',
+    1
+  )
+  H.answer(p, newer[#newer].key, turned)
+  H.settings["auto-continue.enabled"] = false
+  H.publish()
+  H.event("focus.session", {})
+  H.eq(#H.asked_matching("'--' 'enabled' 'off'"), 1, "and off again, the pane never drawn")
+end)
+
+H.test("two events in one batch never write back the value just adopted", function()
   local p = fresh()
   ready(p)
-  H.event(
-    "command.failed",
-    { kind = "set", subject = "auto-continue.enabled", error = "not a flag" }
+  -- config.toml says on (set from a shell before the plugin was installed);
+  -- the Settings switch is still at its default, off.
+  local on = STATUS:gsub(
+    '"enabled": { "value": false, "source": "default" }',
+    '"enabled": { "value": true, "source": "global" }',
+    1
   )
-  H.contains(screen(p), "not a flag")
+  local asks = H.asked_matching("'status' '--json'")
+  H.answer(p, asks[#asks].key, on)
+  H.reset_log()
+  -- One batch: the registry is not republished between these two.
+  H.event("focus.session", {})
+  H.event("focus.pane", {})
+  H.eq(#H.asked_matching("'config' 'set'"), 0, "nothing written back")
+  H.eq(H.commands[1] and H.commands[1].verb, "set", "the switch adopts config.toml")
+  -- Once the kernel applies it, the two agree and nothing more happens.
+  H.flush()
+  H.reset_log()
+  H.event("focus.session", {})
+  H.eq(#H.asked_matching("'config' 'set'"), 0)
+  H.eq(#H.commands, 0)
+end)
+
+H.test("with no local session the switch is left alone, quietly", function()
+  local p = fresh()
+  H.sessions = { snapshot_sessions()[5] }
+  screen(p)
+  answer(p, "'status' '--json'", STATUS)
+  H.settings["auto-continue.enabled"] = true
+  H.reset_log()
+  for _ = 1, 3 do
+    H.event("session.status", {})
+  end
+  H.eq(#H.asked_matching("'config' 'set'"), 0, "no write to another host's config")
+  H.eq(#H.commands, 0, "no command, no repeated error message")
+end)
+
+H.test("e on a session whose override was written by hand as yes", function()
+  local p = fresh()
+  local body = STATUS:gsub('"overrides": { "enabled": "on"', '"overrides": { "enabled": "yes"', 1)
+  screen(p)
+  answer(p, "'status' '--json'", body)
+  select_row(p, "worker")
+  H.key(p, "e")
+  local off = H.asked_matching("'--session' '" .. id("0a") .. "' '--json' '--' 'enabled' 'off'")
+  H.eq(#off, 1, "yes is on, so the next step is off")
 end)
 
 H.test("the palette toggles the session selected in the list, from any pane", function()
@@ -483,7 +557,12 @@ H.test("the palette toggles the session selected in the list, from any pane", fu
   ready(p)
   H.store_data.selected = id("0c")
   H.call(p, "on_action", "auto-continue.toggle_selected")
-  H.eq(#H.asked_matching("'config' 'set' 'enabled' 'on' '--session' '" .. id("0c") .. "'"), 1)
+  H.eq(
+    #H.asked_matching(
+      "'config' 'set' '--session' '" .. id("0c") .. "' '--json' '--' 'enabled' 'on'"
+    ),
+    1
+  )
   H.store_data.selected = id("0d")
   H.reset_log()
   H.call(p, "on_action", "auto-continue.toggle_selected")

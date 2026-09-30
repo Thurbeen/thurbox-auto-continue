@@ -82,6 +82,11 @@ local function status_sources()
   return model.status_sources(sessions())
 end
 
+-- Asked from render and from every handler that reconciles: the pane is often
+-- hidden behind the agent, and a hidden pane is never rendered, so a handler
+-- that waited on render for a fresh status would wait forever.
+local ask_status
+
 --- The newest answered read for `base`, looking back from the current
 --- generation so the pane does not blink to "pending" while it refreshes.
 local function latest(base, gen)
@@ -119,6 +124,17 @@ local function status_now()
     end
   end
   return merged
+end
+
+ask_status = function()
+  local gen = generation()
+  for _, src in ipairs(status_sources()) do
+    run(
+      src.key .. ":" .. gen,
+      model.status_cmd(),
+      { session = src.session, ttl = STATUS_TTL, timeout = TIMEOUT }
+    )
+  end
 end
 
 local function setting_on()
@@ -236,8 +252,26 @@ end
 --- Keep the Settings switch and config.toml's `enabled` in step (see
 --- `model.reconcile`). Called from handlers only.
 local function reconcile()
-  if not run or busy() then
+  -- Only this machine's config.toml has a Settings switch to mirror: with no
+  -- local session, the status in hand is some host's.
+  if not run or not model.anchor(sessions(), nil) then
     return
+  end
+  ask_status()
+  if busy() then
+    return
+  end
+  local setting = setting_on()
+  -- A switch this pane just moved is applied by the kernel after the handler
+  -- returns, and `thurbox.registry` is not republished until the next batch:
+  -- until it reads back, the old value is not a user's change.
+  if state.expect ~= nil then
+    local age = (thurbox.taken_at_ms or 0) - (state.expect_at or 0)
+    if setting == state.expect or age > 10000 then
+      state.expect, state.expect_at = nil, nil
+    else
+      return
+    end
   end
   local status = status_now()
   if status.kind ~= "ok" or not status.data then
@@ -250,7 +284,7 @@ local function reconcile()
   end
   local global = status.data.global or {}
   local config = type(global.enabled) == "table" and global.enabled.value == true or false
-  local act = model.reconcile(setting_on(), config, state.mirror)
+  local act = model.reconcile(setting, config, state.mirror)
   if act.write ~= nil then
     if
       write(GLOBAL, "enabled", act.write and "on" or "off", "the global switch (from Settings)")
@@ -262,6 +296,7 @@ local function reconcile()
   end
   if act.adopt ~= nil then
     command("set", { text = SETTING, flag = act.adopt })
+    state.expect, state.expect_at = act.adopt, thurbox.taken_at_ms
   end
   if state.mirror ~= act.baseline then
     state.mirror = act.baseline
@@ -290,13 +325,14 @@ local function cycle_enabled(target)
       write(GLOBAL, "enabled", on and "on" or "off", "global switch " .. (on and "on" or "off"))
     then
       command("set", { text = SETTING, flag = on })
+      state.expect, state.expect_at = on, thurbox.taken_at_ms
       state.mirror = on
       state.mirror_wait = generation() + 1
     end
     return
   end
   -- inherit → on → off → inherit
-  local override = ((status.rows[target] or {}).overrides or {}).enabled
+  local override = model.switch(((status.rows[target] or {}).overrides or {}).enabled)
   if override == "on" then
     write(target, "enabled", "off", name .. " off")
   elseif override == "off" then
@@ -738,9 +774,6 @@ local function feedback_lines(w, out)
         line({ span(" ✗ " .. last.what .. ": " .. tostring(answer.error), theme.bad) }, w)
     end
   end
-  if state.set_error then
-    out[#out + 1] = line({ span(" ✗ Settings: " .. state.set_error, theme.bad) }, w)
-  end
   if state.notice then
     out[#out + 1] = line({ span(" " .. state.notice, theme.role("status_blocked")) }, w)
   end
@@ -769,13 +802,7 @@ local function render(ctx)
   local now = thurbox.taken_at_ms
 
   -- Ask on every render: an answer still fresh costs a table lookup.
-  for _, src in ipairs(status_sources()) do
-    run(
-      src.key .. ":" .. gen,
-      model.status_cmd(),
-      { session = src.session, ttl = STATUS_TTL, timeout = TIMEOUT }
-    )
-  end
+  ask_status()
   local status = status_now()
   local target, index, list = selected()
   local anchor = anchor_for(target)
@@ -912,6 +939,9 @@ return {
     end
     if action == "auto-continue.toggle_selected" then
       local id = store.selected
+      if run then
+        ask_status()
+      end
       local status = status_now()
       local ok, name = writable(id or "", status)
       if not id or not ok then
@@ -985,16 +1015,6 @@ return {
       if state.cursor ~= payload.to then
         state.cursor = payload.to
       end
-    end
-    if name == "command.failed" and payload.kind == "set" and payload.subject == SETTING then
-      state.set_error = tostring(payload.error or "refused")
-    elseif
-      name == "command.done"
-      and payload.kind == "set"
-      and payload.subject == SETTING
-      and state.set_error
-    then
-      state.set_error = nil
     end
     reconcile()
   end,

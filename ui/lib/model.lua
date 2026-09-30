@@ -200,15 +200,29 @@ function model.show_cmd(session)
   return model.command({ "config", "show", "--json" })
 end
 
+-- Options first and the positionals after `--`, so a value that starts with
+-- a dash (a message like "- keep going") is never read as an option.
 function model.set_cmd(key, value, session)
   if session then
-    return model.command({ "config", "set", key, value, "--session", session, "--json" })
+    return model.command({ "config", "set", "--session", session, "--json", "--", key, value })
   end
-  return model.command({ "config", "set", key, value, "--json" })
+  return model.command({ "config", "set", "--json", "--", key, value })
 end
 
 function model.unset_cmd(key, session)
-  return model.command({ "config", "unset", key, "--session", session, "--json" })
+  return model.command({ "config", "unset", "--session", session, "--json", "--", key })
+end
+
+--- A session's `enabled` override as the CLI reads it: `on`, `off`, or nil for
+--- none — including a hand-written value the CLI ignores.
+function model.switch(value)
+  local v = type(value) == "string" and value:lower() or nil
+  if v == "on" or v == "true" or v == "yes" or v == "1" then
+    return "on"
+  elseif v == "off" or v == "false" or v == "no" or v == "0" then
+    return "off"
+  end
+  return nil
 end
 
 ---------------------------------------------------------------------------

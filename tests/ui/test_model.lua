@@ -60,22 +60,30 @@ H.test("a value is one shell word whatever it holds", function()
   )
   local out = pipe:read("a")
   pipe:close()
-  H.eq(out, "[config]\n[set]\n[message]\n[" .. tricky .. "]\n[--session]\n[s-1]\n[--json]\n")
+  H.eq(out, "[config]\n[set]\n[--session]\n[s-1]\n[--json]\n[--]\n[message]\n[" .. tricky .. "]\n")
 end)
 
 H.test("the setters and readers spell the contract's commands", function()
-  H.contains(model.set_cmd("delay_secs", "60", nil), "'config' 'set' 'delay_secs' '60' '--json'")
+  H.contains(
+    model.set_cmd("delay_secs", "60", nil),
+    "'config' 'set' '--json' '--' 'delay_secs' '60'"
+  )
   H.contains(
     model.set_cmd("enabled", "on", "s-9"),
-    "'config' 'set' 'enabled' 'on' '--session' 's-9' '--json'"
+    "'config' 'set' '--session' 's-9' '--json' '--' 'enabled' 'on'"
   )
   H.contains(
     model.unset_cmd("message", "s-9"),
-    "'config' 'unset' 'message' '--session' 's-9' '--json'"
+    "'config' 'unset' '--session' 's-9' '--json' '--' 'message'"
   )
   H.contains(model.show_cmd("s-9"), "'config' 'show' '--session' 's-9' '--json'")
   H.contains(model.show_cmd(nil), "'config' 'show' '--json'")
   H.contains(model.status_cmd(), "'status' '--json'")
+end)
+
+H.test("validate: a message may start with a dash; it is a value, not an option", function()
+  H.eq(model.validate("message", "- keep going"), "- keep going")
+  H.eq(model.validate("message", "--json"), "--json")
 end)
 
 H.test("validate: a message is one line of 1-200 characters, not a command", function()
@@ -279,6 +287,17 @@ H.test("badge: never for a session that is not Claude's, nor one nobody can read
     ),
     nil
   )
+end)
+
+H.test("switch reads a session override the way the contract does", function()
+  for _, v in ipairs({ "on", "true", "yes", "1", "ON", "Yes" }) do
+    H.eq(model.switch(v), "on", v)
+  end
+  for _, v in ipairs({ "off", "false", "no", "0" }) do
+    H.eq(model.switch(v), "off", v)
+  end
+  H.eq(model.switch(nil), nil)
+  H.eq(model.switch("maybe"), nil, "an invalid one is ignored, as the CLI ignores it")
 end)
 
 H.test("reconcile mirrors a Settings change to config.toml, and config back to Settings", function()

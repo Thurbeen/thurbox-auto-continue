@@ -257,13 +257,18 @@ How it works, briefly:
   `auto-continue.enabled` (Settings panel, off by default), as the face of
   config.toml's global `enabled`, which is what the headless extension reads.
   The two are kept in step from event handlers and key presses — never from the
-  render loop — by the pane's one `run` grant: flip the switch and the next
-  interface event (a selection or focus change) writes `config set enabled`;
-  change config.toml from a shell and the switch follows. When both changed,
-  config.toml wins. Until then the pane says `Settings switch: on · config.toml:
-  off`. Turning the global switch with `e` in the pane sets both at once.
+  render loop — by the pane's one `run` grant, whether or not the pane is on
+  screen: flip the switch and the next interface events (a selection or focus
+  change) read the status and write `config set enabled`; change config.toml
+  from a shell and the switch follows. When both changed, config.toml wins.
+  Until then the pane says `Settings switch: on · config.toml: off`. Turning
+  the global switch with `e` in the pane sets both at once. With no local
+  session there is no config.toml of this machine's to mirror, and the switch
+  is left alone.
 - **Cost.** The pane and the badge each read `status --json` at most every 10
-  seconds while they are drawn, and the pane re-reads right after a change.
+  seconds while they are drawn, and the pane re-reads right after a change;
+  the Settings mirror reads it on interface events too, within the same 10
+  seconds.
   With shared hosts, one status is one `ssh` per host.
 
 Not there yet:
