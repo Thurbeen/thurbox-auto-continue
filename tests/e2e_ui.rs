@@ -194,6 +194,15 @@ fn plugin_installs_configures_and_uninstalls() {
     live_ok(&sb, &ui, "settle\nselect worker\nsettle\nkey M\nsettle\nexpect back to the global value\n");
     assert_eq!(show(&sb, Some(&worker))["message"]["value"], "carry on");
 
+    // A message may start with a dash: it reaches the CLI as a value, after
+    // `--`, not as an option.
+    live_ok(
+        &sb,
+        &ui,
+        "settle\nselect worker\nsettle\nkey m\ntype - then carry on\nkey enter\nsettle\nexpect ✓ saved\n",
+    );
+    assert_eq!(show(&sb, Some(&worker))["message"]["value"], "- then carry on");
+
     // Uninstall: the panes, then the extension and everything it stored.
     for file in [PANE, BADGE] {
         sb.cli(&["plugin", "remove", &format!("thurbox-auto-continue/{file}")]);
