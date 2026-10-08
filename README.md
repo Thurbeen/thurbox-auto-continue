@@ -9,10 +9,11 @@ deterministic binary makes every decision.
 
 It is **off by default**, globally and for every session.
 
-![The Thurbox TUI with the auto-continue pane open. One session is switched on with its own message and a 5 second delay; a fake usage limit arms a countdown, and at the reset the message is typed into the session.](media/demo.gif)
+![The Thurbox TUI in its Doom theme with the auto-continue pane open. One session is switched on with its own message and a 5 second delay; a fake usage limit arms the episode, and once the window resets the message is typed into the session.](media/demo.gif)
 
-The demo shows the real TUI with a fake Claude in a throwaway sandbox.
-[`demo/record.sh`](demo/record.sh) records it again.
+The demo shows the real TUI, in Thurbox's built-in Doom theme, with a fake
+Claude in a throwaway sandbox. [`demo/record.sh`](demo/record.sh) records it
+again.
 
 ## Install
 

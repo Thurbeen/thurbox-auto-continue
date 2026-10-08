@@ -15,7 +15,8 @@
 # a user gets rather than the working tree.
 #
 #   demo/sandbox.sh        prints the root; the caller tears it down:
-#                          TMUX_TMPDIR=<root>/tmux tmux -L thurbox kill-server; rm -rf <root>
+#                          TMUX_TMPDIR=<root>/tmux tmux -L thurbox kill-server
+#                          rm -f "$(cat <root>/home-link)"; rm -rf <root>
 #
 # Needs: cargo, git, sqlite3, tmux, and thurbox-cli on PATH (or THURBOX_CLI).
 set -euo pipefail
@@ -31,12 +32,20 @@ done
 ROOT=${DEMO_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/thurbox-auto-continue-demo}
 mkdir -p "$ROOT"
 S=$(mktemp -d "$ROOT/sandbox.XXXXXX")
-trap 'TMUX_TMPDIR="$S/tmux" tmux -L thurbox kill-server 2>/dev/null; rm -rf "$S"' ERR
+# HOME is a short symlink to the sandbox's home: Thurbox's UI control socket
+# lives under it, and a socket path longer than the OS allows (about 104
+# bytes) would be refused, with a notice in the recording. /tmp itself, not
+# $TMPDIR: macOS sets that to a long per-user path.
+mkdir -p "$S/home"
+LINK=$(mktemp -u /tmp/tac-XXXXXX)
+ln -s "$S/home" "$LINK"
+echo "$LINK" >"$S/home-link"
+trap 'TMUX_TMPDIR="$S/tmux" tmux -L thurbox kill-server 2>/dev/null; rm -f "$LINK"; rm -rf "$S"' ERR
 
 (cd "$REPO" && cargo build --release --locked --quiet --bin thurbox-auto-continue --example fake_claude)
 TARGET=${CARGO_TARGET_DIR:-$REPO/target}/release
 
-export HOME="$S/home"
+export HOME="$LINK"
 export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
 export XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
 export TMUX_TMPDIR="$S/tmux" FAKE_CLAUDE_CTL="$S/ctl"
@@ -58,8 +67,6 @@ version_check = false
 auto_update = false
 notifications = false
 SETTINGS
-# The built-in skill installer would announce itself in the recording.
-thurbox-cli extension deactivate ui-skill >/dev/null
 cat > "$S/bin/fake-codex" <<'CODEX'
 #!/bin/sh
 printf 'codex (a stub for the demo: not Claude, so auto-continue leaves it alone)\n'
