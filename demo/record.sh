@@ -39,7 +39,10 @@ for tool in agg tmux python3 sqlite3 "$ASCIINEMA" "$THURBOX" "$THURBOX_CLI"; do
     command -v "$tool" >/dev/null || missing="$missing ${tool:-thurbox or asciinema}"
 done
 [ -n "$missing" ] && { echo "missing:$missing" >&2; exit 2; }
-"$ASCIINEMA" --version | grep -q '^asciinema 3\.' || { echo "demo/record.sh needs asciinema 3 (ASCIINEMA)" >&2; exit 2; }
+case $("$ASCIINEMA" --version) in
+"asciinema 3."*) ;;
+*) echo "demo/record.sh needs asciinema 3 (ASCIINEMA)" >&2; exit 2 ;;
+esac
 
 S=$("$REPO/demo/sandbox.sh")
 ln -sf "$THURBOX" "$S/bin/thurbox"
@@ -173,7 +176,7 @@ wait_for "saved parser delay"
 sleep 1.2
 snap 3-custom
 
-# A usage limit, as the fake Claude draws one: the window resets in 20s.
+# A usage limit, as the fake Claude draws one: the window resets in 3s.
 ID=$("$S/enter.sh" thurbox-cli --json session list | python3 -c \
     'import json,sys; print(next(s["id"] for s in json.load(sys.stdin) if s["name"] == "parser"))')
 mkdir -p "$S/ctl/$ID"

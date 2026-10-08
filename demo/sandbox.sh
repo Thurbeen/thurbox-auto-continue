@@ -34,9 +34,10 @@ mkdir -p "$ROOT"
 S=$(mktemp -d "$ROOT/sandbox.XXXXXX")
 # HOME is a short symlink to the sandbox's home: Thurbox's UI control socket
 # lives under it, and a socket path longer than the OS allows (about 104
-# bytes) would be refused, with a notice in the recording.
+# bytes) would be refused, with a notice in the recording. /tmp itself, not
+# $TMPDIR: macOS sets that to a long per-user path.
 mkdir -p "$S/home"
-LINK=$(mktemp -u "${TMPDIR:-/tmp}/tac-XXXXXX")
+LINK=$(mktemp -u /tmp/tac-XXXXXX)
 ln -s "$S/home" "$LINK"
 echo "$LINK" >"$S/home-link"
 trap 'TMUX_TMPDIR="$S/tmux" tmux -L thurbox kill-server 2>/dev/null; rm -f "$LINK"; rm -rf "$S"' ERR
