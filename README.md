@@ -1,5 +1,12 @@
 # thurbox-auto-continue
 
+> [!WARNING]
+> **Archived.** thurbox v3 removed the `extension`, `automation` and `session`
+> commands of `thurbox-cli` that this extension and its pane are built on, so it
+> works only on thurbox 2.x. Schedule work with a Fleet v3
+> [CronTask](https://github.com/Thurbeen/thurbox/blob/main/docs/fleet/resources/cron-task.md) instead, and see
+> [Migrating to thurbox v3](https://github.com/Thurbeen/thurbox/blob/main/docs/migrating-to-v3.md).
+
 Auto-continue for Claude sessions in [Thurbox](https://github.com/Thurbeen/thurbox).
 
 When a Claude Code session hits its usage limit, this extension waits until the
